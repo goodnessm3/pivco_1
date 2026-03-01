@@ -4,7 +4,7 @@ from array import array
 from readmidi import MidiReader
 import math
 from freq_count_nodma import freq_counter_cleanup
-from mydacs import send_dac_value, dac_setup, send_dac_fraction
+from mydacs import send_dac_value, dac_setup, ADDRESS_MANAGER
 dac_setup()  # manages reset pin
 
 from oscillator import Oscillator
@@ -14,9 +14,13 @@ from controls import Controls, DisplayManager
 import settings_manager
 from filtertable import FILTER_CVS  # for tracking cutoff freq with volts/octave
 
-i2c = I2C(0, scl=Pin(17), sda=Pin(16))  # for driving the LCD display
+i2c = I2C(1, scl=Pin(27), sda=Pin(26))  # for driving the LCD
 DISPLAY = LCD(i2c)  # set up the text display
 
+# TODO: specify DAC output order in one place
+# this is the order of signals as they come out of the DAC chip
+# external mix cv, suboctave, VCA, PWM, coarse osc, fine osc, filter c/o, filter res
+#        0            1        2    3     4            5         6            7
 
 
 def freq2cutoff(freq):
@@ -38,17 +42,17 @@ class Voice:
 
         self.identity = 0  # HARDCODED for now, but this is the "caller" argument for mod sources
 
-        self.osc = Oscillator(0, 1)  # we are manually specifying coarse and fine DAC index here
+        self.osc = Oscillator(4, 5)  # we are manually specifying coarse and fine DAC index here
         # eventually need to give voice an address as well for polyphonic
         self.osc.setup(retune=retune)
 
         # indices of the DAC channels that control these parameters
-        self.xfade_idx = 2
-        self.suboctave_idx = 3
-        self.pwm_idx = 4
-        self.envelope_idx = 5
-        self.resonance_idx = 6
-        self.cutoff_idx = 7
+        self.xfade_idx = 0  # actually external mix now TODO
+        self.suboctave_idx = 1
+        self.pwm_idx = 3
+        self.envelope_idx = 2
+        self.resonance_idx = 7
+        self.cutoff_idx = 6
         
         # these values are pushed into the voice class from the main loop update function
         # all are always values from 0 to 255 to match the DAC's expected input values
@@ -64,7 +68,8 @@ class Voice:
         self.filter_track = 0  # signal added to the filter output to track with volts/octave
 
         # we need to put these in a list so we can access the variables for applying modulation sources:
-        self.variable_names = ["coarse", "fine", "xfade", "suboctave", "pwm", "envelope", "resonance", "cutoff"]
+        #self.variable_names = ["coarse", "fine", "xfade", "suboctave", "pwm", "envelope", "resonance", "cutoff"]
+        self.variable_names = ["xfade","suboctave", "envelope", "pwm", "coarse", "fine", "cutoff", "resonance"]
         # we are storing names because we use getattr. Would probably be better to just do by list index
         # TODO: by list index instead
 
@@ -165,8 +170,8 @@ class Voice:
 
 # setting up tuning line
 
-TEST_CS_PIN = Pin(27,Pin.OUT,value=1)
-TUNE_LATCH_PIN = Pin(26,Pin.OUT,value=1)
+TEST_CS_PIN = Pin(7,Pin.OUT,value=1)
+TUNE_LATCH_PIN = Pin(4,Pin.OUT,value=1)
 
 # for other testing just always connect the tune bus first thing
 time.sleep(0.01)
@@ -195,16 +200,18 @@ LFOLIST = [LFO2.LFO(), LFO2.LFO(), LFO2.LFO(), LFO2.LFO(), LFO2.LFO(), LFO2.LFO(
 
 #["coarse", "fine", "xfade", "suboctave",
 #"pwm", "envelope", "resonance", "cutoff"]
-
+# TODO - numbers are all messed up since changing to PCB DAC order
+# TODO - rather than LFO and ADSR select, do parameter select, each parameter having its own LFO and ADSR
+# if the depth of a mod source is set to 0 then it is considered to be turned off.
 tempmodlist = [
-                [LFOLIST[6],ADSRLIST[6]], # c
-               [LFOLIST[7],ADSRLIST[7]], # f
-               [LFOLIST[5],ADSRLIST[5]], # xfade
-               [LFOLIST[1],ADSRLIST[1]],  # suboct
-               [LFOLIST[4],ADSRLIST[4]],  # pwm
-               [LFOLIST[0],ADSRLIST[0]],  # VCA
-               [LFOLIST[3],ADSRLIST[3]],  # resn
-               [LFOLIST[2],ADSRLIST[2]]  # cutoff
+                [LFOLIST[6],ADSRLIST[6]],
+               [LFOLIST[7],ADSRLIST[7]],
+               [LFOLIST[5],ADSRLIST[5]],
+               [LFOLIST[1],ADSRLIST[1]],
+               [LFOLIST[4],ADSRLIST[4]],
+               [LFOLIST[0],ADSRLIST[0]],
+               [LFOLIST[3],ADSRLIST[3]],
+               [LFOLIST[2],ADSRLIST[2]]
                ]
 
 #send_dac_value(3, 64)  # manually force PWM = 50% so that tuner can read the frequency
@@ -231,6 +238,7 @@ loopstart = time.ticks_ms()
 
 try:
     while 1:
+        ADDRESS_MANAGER.put(0)  # TODO: eventually this will handle addresses 0-7
         loopcount += 1
         DISPLAY.draw_screen()
         MR.read()  # induce the MidiReader to compile messages to read out         
