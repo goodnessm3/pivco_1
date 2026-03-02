@@ -1,3 +1,4 @@
+from pin_assignments import *
 import time, array, uctypes, machine, struct
 import rp2
 from rp2 import PIO, asm_pio
@@ -10,8 +11,7 @@ from rp2 import PIO, asm_pio
 # ==========================================
 # 1. PIO Configuration (Robust Timing)
 # ==========================================
-PIN_IN = 9
-PIN_SYNC = 11
+
 SM_FREQ = 6_000_000
 MAXX = 2**16-1
 
@@ -38,45 +38,6 @@ def clocker():
     
 # we want to use in rather than mov to put fewer bytes into the ISR at a time.
 
-# CHANGED 2201 - REMOVE WAITS!???
-@asm_pio(fifo_join=PIO.JOIN_RX)
-def clocker16():  
-    mov(x, invert(0x00000000))
-    wrap_target()
-    label("count")
-    jmp(pin, "write")  # Check sync pin
-    jmp(x_dec, "count")
-    label("write")
-    in_(x, 16)        # Capture count with bit shift
-    mov(x, invert(0x00000000))        # Reset Counter immediately
-    label("count2")
-    jmp(pin, "write2")  # Check sync pin
-    jmp(x_dec, "count2")
-    label("write2")
-    in_(x, 16)        # Capture count with bit shift
-    push(block)      # Send to FIFO, only send every two cycles
-    mov(x, invert(0x00000000))        # Reset Counter immediately
-    wrap()
-    
-    
-@asm_pio()
-def clocker_orig():
-    pull(noblock)      # Load max counter value to OSR
-    mov(x, osr)        # Reset Counter
-    wrap_target()
-    label("count")
-    jmp(pin, "write")  # Check sync pin
-    jmp(x_dec, "count")
-    label("write")
-    mov(isr, x)        # Capture count
-    push(noblock)      # Send to FIFO
-    mov(x, osr)        # Reset Counter immediately
-    wait(0, pin, 0)    # Wait for sync low
-    wrap()
-    
-    
-
-# CHANGED DELAY 2 to 1 at 22:29
 @asm_pio(sideset_init=PIO.OUT_LOW)
 def edge_watcher():
     wrap_target()
@@ -89,8 +50,8 @@ def edge_watcher():
     wrap()
 
 # Pin Setup
-gppin = machine.Pin(PIN_IN, machine.Pin.IN, machine.Pin.PULL_UP)
-sidepin = machine.Pin(PIN_SYNC, machine.Pin.OUT)
+gppin = machine.Pin(P_TUNE_INPUT, machine.Pin.IN, machine.Pin.PULL_UP)
+sidepin = machine.Pin(P_PIN_SYNC, machine.Pin.OUT)
 sidepin.value(0)
 
 # 22:05 - back to old clocker sm

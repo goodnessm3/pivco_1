@@ -1,3 +1,4 @@
+from pin_assignments import *
 import machine
 from machine import Pin
 import time
@@ -6,11 +7,11 @@ import rp2
 from rp2 import PIO, asm_pio
 
 #CS_PIN = Pin(21,Pin.OUT,Pin.PULL_UP)  # this is really address enable on the PCB test
-RST_PIN = Pin(8,Pin.OUT,Pin.PULL_UP)
+RST_PIN = Pin(P_DAC_RESET,Pin.OUT,Pin.PULL_UP)
 RST_PIN.low()
 #CS_PIN.low()  # address enable is active HIGH
-TUNE_LATCH_PIN = Pin(4,Pin.OUT,value=1)
 
+# old spi using actual proper built in code rather than bit-banged nonsense
 """
 spi = machine.SPI(0,
                   baudrate=1000000,
@@ -24,17 +25,6 @@ spi = machine.SPI(0,
 
 """
 
-"""
-# temporary - set up tune latch on startup
-time.sleep(1)
-CS_PIN.high()  # logical high +12 V on CS
-time.sleep(1)
-TUNE_LATCH_PIN.low()  # rising edge of clock pin
-time.sleep(1)
-TUNE_LATCH_PIN.high()  # falling edge of clock, data is latched
-time.sleep(1)
-CS_PIN.low()  # data goes low but we saved the bit
-"""
 
 # custom SPI that manages CS transitions between 12-bit instructions
 @asm_pio(
@@ -69,20 +59,15 @@ def addressmgr():
     out(pins, 3)
 
 
-MOSI_PIN = 16
-AEN_PIN = 18
-SCK_PIN = 17
-ADDRESS_BASE_PIN = 19  # this and the next 2 pins are used for A0, A1 and A2 for the 3-to-8
 
-
-sm_spi = rp2.StateMachine(2, myspi, freq=1000000, out_base=Pin(MOSI_PIN),
-    set_base=Pin(AEN_PIN),
-    sideset_base=Pin(SCK_PIN))
+sm_spi = rp2.StateMachine(2, myspi, freq=1000000, out_base=Pin(P_MOSI_PIN),
+    set_base=Pin(P_AEN_PIN),
+    sideset_base=Pin(P_SCK_PIN))
 sm_spi.active(1)
 
 # 19, 20, 21 address pins
 # this state machine is accessed from within the main program loop
-ADDRESS_MANAGER = rp2.StateMachine(3, addressmgr, freq=1000000, out_base=Pin(ADDRESS_BASE_PIN))
+ADDRESS_MANAGER = rp2.StateMachine(3, addressmgr, freq=1000000, out_base=Pin(P_ADDRESS_BASE_PIN))
 ADDRESS_MANAGER.active(1)
 
 #admgr.put(0)  # TODO - this is temporary, we eventually need to manage addresses of multiple DACs

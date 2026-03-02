@@ -1,3 +1,4 @@
+from pin_assignments import *
 from machine import Pin, I2C
 import time
 from array import array
@@ -14,24 +15,14 @@ from controls import Controls, DisplayManager
 import settings_manager
 from filtertable import FILTER_CVS  # for tracking cutoff freq with volts/octave
 
-i2c = I2C(1, scl=Pin(27), sda=Pin(26))  # for driving the LCD
+i2c = I2C(1, scl=Pin(P_I2C_SCL), sda=Pin(P_I2C_SDA))  # for driving the LCD
+# I2C block 1 is associated with pins 26 and 27 (defined in pin assignments file)
 DISPLAY = LCD(i2c)  # set up the text display
 
 # TODO: specify DAC output order in one place
 # this is the order of signals as they come out of the DAC chip
 # external mix cv, suboctave, VCA, PWM, coarse osc, fine osc, filter c/o, filter res
 #        0            1        2    3     4            5         6            7
-
-
-def freq2cutoff(freq):
-    
-    # what voltage do we need for a cutoff of this freq in Hz? Used experimentally determined values
-    # made a linear fit of log2(cutoff) vs. PROPORTION of control voltage input
-    # that is, the return value from this function is a FRACTION (0 to 1.0) of the 5 V control voltage.
-    # 5 V CV range covers 18 kHz down to about 100 Hz (hard to measure at very low freq as full resonance stops working)
-
-    return (math.log2(freq) - 14.2) / -9.45
-    # todo: get away from log and use something faster or pre-computed table
 
 
 class Voice:
@@ -82,11 +73,9 @@ class Voice:
         self.variable_names = ["xfade","suboctave", "envelope", "pwm", "coarse", "fine", "cutoff", "resonance"]
         # we are storing names because we use getattr. Would probably be better to just do by list index
         # TODO: by list index instead
-
         
         self.last_sent = [0,0,0,0,0,0,0,0]  # don't update a DAC if the value hasn't changed. Use this
         # to keep track of the last value we sent to the DAC for a given channel
-        
 
         # current statuses
         self.note_down = False
@@ -194,8 +183,8 @@ class Voice:
 
 # setting up tuning line
 
-TEST_CS_PIN = Pin(7,Pin.OUT,value=1)
-TUNE_LATCH_PIN = Pin(4,Pin.OUT,value=1)
+TEST_CS_PIN = Pin(P_TEST_CS_PIN,Pin.OUT,value=1)  # TODO - use actual CS when PCB is connected
+TUNE_LATCH_PIN = Pin(P_TUNE_LATCH_PIN,Pin.OUT,value=1)
 
 # for other testing just always connect the tune bus first thing
 time.sleep(0.01)
@@ -207,26 +196,13 @@ TUNE_LATCH_PIN.high()  # falling edge of clock, data is latched
 time.sleep(0.01)
 TEST_CS_PIN.high()  # data goes low but we saved the bit
 
-#send_dac_value(4, 180)  # PWM - 0.70 gives 50% duty
-#send_dac_value(1, 127)
-
-
-# define table of note frequencies (midi note index -> frequency)
-A1 = 55.00
-NOTES = [0.0] * 33  # unused very low notes
-# going from A1 as it's the lowest integer number
-for x in range(100):
-    NOTES.append(round(A1 * 2**(x/12.0),2))
-    
 # build all voices and modulation sources
 ADSRLIST = [ADSR2.ADSR(), ADSR2.ADSR(),ADSR2.ADSR(),ADSR2.ADSR(),ADSR2.ADSR(),ADSR2.ADSR(),ADSR2.ADSR(),ADSR2.ADSR()]
 LFOLIST = [LFO2.LFO(), LFO2.LFO(), LFO2.LFO(), LFO2.LFO(), LFO2.LFO(), LFO2.LFO(), LFO2.LFO(), LFO2.LFO()]
 
-#["coarse", "fine", "xfade", "suboctave",
-#"pwm", "envelope", "resonance", "cutoff"]
 # TODO - numbers are all messed up since changing to PCB DAC order
 # TODO - rather than LFO and ADSR select, do parameter select, each parameter having its own LFO and ADSR
-# if the depth of a mod source is set to 0 then it is considered to be turned off.
+# TODO - if the depth of a mod source is set to 0 then it is considered to be turned off.
 tempmodlist = [
                 [LFOLIST[6],ADSRLIST[6]],
                [LFOLIST[7],ADSRLIST[7]],
@@ -238,12 +214,9 @@ tempmodlist = [
                [LFOLIST[2],ADSRLIST[2]]
                ]
 
-#send_dac_value(3, 64)  # manually force PWM = 50% so that tuner can read the frequency
-
 V = Voice(tempmodlist, retune=True)
 V.monitoring = False  # TODO: handle monitoring of multiple voices
 VOICES = [V]  # in the future, there be more
-
 
 MR = MidiReader()
 CONTROLS = Controls(VOICES, LFOLIST, ADSRLIST)
@@ -255,7 +228,7 @@ print("Done")
 
 down_notes = {}  # keep track of which voice is playing which note
  # so we can send key-up signals to them
- # todo - this could be an array
+ # todo - this should be an array
 
 
 loopcount = 0
@@ -283,18 +256,16 @@ try:
                 ob, parm, value = ret[0]
                 if parm:  # write the named variable of the specified object
                     # ob.__setattr__(parm, value)  # not this!!
-                    #print("setattr", ob, parm, value)
                     setattr(ob, parm, value)  # but this!!
                 pair = DM.update(ret[0])  # get a new frame buffer for the LCD
                 DISPLAY.update(pair)  # send the new frame buffer for display next loop
-
         
         for status, note in notes_queue:  # tuples of freq, true/false
             if status:  # True, want to play a new note
                 for v in VOICES:  # find the first available voice
                     v.send(False)  # terminate current note
                     down_notes = {}  # can't decay when only 1 voice
-                    # TESTING code for single voice case and played note prio.
+                    # this is TESTING code for single voice case and played note prio.
                     v.send(True, note)
                     v.monitoring = True  # TODO - track which notes are monitored
                     #print(f"Assigned note {note} to {v}")
@@ -311,9 +282,7 @@ try:
         for q in VOICES:
             q.update()
             
-        #loop_time = time.ticks_diff(tnow, loopstart)
-        #print(f"Loop time is {loop_time} us")
-            
+
 
 finally:
     print("count", loopcount)

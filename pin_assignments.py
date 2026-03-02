@@ -1,0 +1,13 @@
+# no instantiation of any pins, just numbering
+
+P_TEST_CS_PIN = 7
+P_TUNE_LATCH_PIN = 4
+P_I2C_SCL = 27
+P_I2C_SDA = 26
+P_DAC_RESET = 8
+P_MOSI_PIN = 16
+P_AEN_PIN = 18
+P_SCK_PIN = 17
+P_ADDRESS_BASE_PIN = 19
+P_TUNE_INPUT = 9
+P_PIN_SYNC = 11
