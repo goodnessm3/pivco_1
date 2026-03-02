@@ -165,6 +165,8 @@ def write_to_dac_old(b):
 
 def send_dac_value(dac, val):
 
+    #print("sending val ", val, "to ", dac)
+
     if val < 0:
         print(f"warning - {val} was clamped to 0")
         val = 0

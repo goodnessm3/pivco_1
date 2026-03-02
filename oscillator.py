@@ -23,6 +23,8 @@ for x in range(100):
 
 class PidController:
 
+    # TODO - the PID has no concept of time! So the I term needed will vary depending on how often this is called!
+
     def __init__(self):
         self.accumulated_error = 0
         self.p = 2  # note these are bit shifts, so 3 means divide by 8
@@ -68,6 +70,9 @@ class Oscillator:
 
         self.fitter = Fitter()  # mathematical tuning curve before PID fine-tuning
         self.pid = PidController()
+
+        self.target_note = 0  # the number of the MIDI note we have been asked to play. Need to store this to
+        # get continuous corrections
 
     def setup(self, retune=False):
 
@@ -126,7 +131,7 @@ class Oscillator:
             self.fitter.add(q, log2(sample_to_frequency(r)))
 
         self.fitter.fit_line()
-        #print("fitted initial line")
+        print("fitted initial line")
 
     def note_to_dac_signals(self, note):
 
@@ -136,6 +141,28 @@ class Oscillator:
         cors = round(dacsignal)
 
         return cors  # 8-bit value to send to the coarse DAC, to which we will add a fine correction
+
+    def correct(self):
+
+        """
+        Run with the assumption that this oscillator is being monitored by the frequency counter.
+        - Read the frequency from the counter
+        - compare with what we are supposed to be outputting based on the MIDI note
+        - get a correction from our PID loop
+        - update the tuning array with the new value
+        """
+
+        corr = self.pid.get_correction(self.target_note)
+        fine = 127 + corr
+        #print("pid correction:", corr)
+        if fine < 0:
+            return -1, 255
+        elif fine > 255:
+            return 1, 0
+        else:
+            return 0, fine
+
+
 
     def build_tuning_arrays(self):
 
@@ -204,6 +231,8 @@ class Oscillator:
 
         c = self.coarse_array[midinote]
         f = self.fine_array[midinote]
+        self.target_note = midinote
+        self.pid.reset()
 
         return c, f
 

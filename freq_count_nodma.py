@@ -228,29 +228,11 @@ def longer_sample(pts=40, sleep_time=0.2):
         ytot += lo
 
     return xtot, ytot, points
-    
-    
-""" old clocker16 at 22:02
 
-@asm_pio(fifo_join=PIO.JOIN_RX)
-def clocker16():  
-    mov(x, invert(0x00000000))
-    wrap_target()
-    label("count")
-    jmp(pin, "write")  # Check sync pin
-    jmp(x_dec, "count")
-    label("write")
-    in_(x, 16)        # Capture count with bit shift
-    mov(x, invert(0x00000000))        # Reset Counter immediately
-    wait(0, pin, 0)    # Wait for sync low
-    label("count2")
-    jmp(pin, "write2")  # Check sync pin
-    jmp(x_dec, "count2")
-    label("write2")
-    in_(x, 16)        # Capture count with bit shift
-    push(block)      # Send to FIFO, only send every two cycles
-    mov(x, invert(0x00000000))        # Reset Counter immediately
-    wait(1, pin, 0)    # Wait for sync high  # CHANGED 2200 - high not low
-    wrap()
-    
-"""
+def freq_count_reset():
+
+    """Empty the FIFO because we don't want our new measurement contaminated with old values. Most useful when
+    we changed frequency and want to only measure the new frequency"""
+
+    while sm_clocker.rx_fifo() > 0:
+        sm_clocker.get()

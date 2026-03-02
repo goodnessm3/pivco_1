@@ -3,7 +3,7 @@ import time
 from array import array
 from readmidi import MidiReader
 import math
-from freq_count_nodma import freq_counter_cleanup
+from freq_count_nodma import freq_counter_cleanup, freq_count_reset
 from mydacs import send_dac_value, dac_setup, ADDRESS_MANAGER
 dac_setup()  # manages reset pin
 
@@ -42,9 +42,19 @@ class Voice:
 
         self.identity = 0  # HARDCODED for now, but this is the "caller" argument for mod sources
 
+        # !! HACK ALERT - PWM INDEX IS HARDCODED HERE !! #
+        if retune:
+            send_dac_value(3, 127)
+            # regardless of what it was set to before, need ca. 50% duty cycle to get good measurements
+
         self.osc = Oscillator(4, 5)  # we are manually specifying coarse and fine DAC index here
         # eventually need to give voice an address as well for polyphonic
+
         self.osc.setup(retune=retune)
+
+        self.monitoring = False  # set to true when this voice is connected to the tune bus for monitoring. Then we can
+        # get corrections from the oscillator PID to autotune the frequency and apply it with the rest of the
+        # modulations
 
         # indices of the DAC channels that control these parameters
         self.xfade_idx = 0  # actually external mix now TODO
@@ -100,6 +110,10 @@ class Voice:
         # receive an instruction from the main loop to play a note
         # expects a midi note index
 
+        if self.monitoring:
+            freq_count_reset()  # throw out old freq measurements otherwise the new note correction signal
+            # will be based on the old frequency
+
         if note_down and not self.note_down:
             self.note_down = True
 
@@ -121,6 +135,10 @@ class Voice:
     def update(self):
 
         # TODO: don't bother get'ing from a mod source that isn't in use
+        coarse_correction = fine_corrected = 0
+        if self.monitoring:
+            coarse_correction, fine_corrected = self.osc.correct()
+            #print("freq corrections coarse and fine were: ", coarse_correction, fine_corrected)
 
         for idx, ls in enumerate(self.modulation_assignments):
             modulation_sum = 0  # TODO: what if we want to multiply modulations, not add?
@@ -131,6 +149,12 @@ class Voice:
                 # TODO - just decide on a resolution and stick to it!! Voices should be 16-bit too
 
             base_variable = self.variable_names[idx]  # so we can refer by name
+
+            # overwrite coarse and fine if they need correction
+            if base_variable == "coarse" and coarse_correction != 0:
+                self.coarse += coarse_correction
+            elif base_variable == "fine" and fine_corrected != 0:
+                self.fine = fine_corrected
 
             #print(f"for {base_variable}, modsum = {modulation_sum}")
 
@@ -183,7 +207,7 @@ TUNE_LATCH_PIN.high()  # falling edge of clock, data is latched
 time.sleep(0.01)
 TEST_CS_PIN.high()  # data goes low but we saved the bit
 
-send_dac_value(4, 180)  # PWM - 0.70 gives 50% duty
+#send_dac_value(4, 180)  # PWM - 0.70 gives 50% duty
 #send_dac_value(1, 127)
 
 
@@ -217,6 +241,7 @@ tempmodlist = [
 #send_dac_value(3, 64)  # manually force PWM = 50% so that tuner can read the frequency
 
 V = Voice(tempmodlist, retune=True)
+V.monitoring = False  # TODO: handle monitoring of multiple voices
 VOICES = [V]  # in the future, there be more
 
 
@@ -271,6 +296,7 @@ try:
                     down_notes = {}  # can't decay when only 1 voice
                     # TESTING code for single voice case and played note prio.
                     v.send(True, note)
+                    v.monitoring = True  # TODO - track which notes are monitored
                     #print(f"Assigned note {note} to {v}")
                     down_notes[note] = v  # keep a reference so we can unplay note
                     break  # we only need to assign to a single voice
