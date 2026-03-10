@@ -175,11 +175,11 @@ def send_dac_value(dac, val):
     #print("sending val ", val, "to ", dac)
 
     if val < 0:
-        print(f"warning - {val} was clamped to 0")
+        #print(f"warning - {val} was clamped to 0")
         val = 0
         
     if val > 255:
-        print(f"warning - {val} was clamped to 255")
+        #print(f"warning - {val} was clamped to 255")
         val = 255
 
     msg = make_dac_bytes(val, dac)  # send val (0 to 255) to dac channel number

@@ -14,6 +14,9 @@ from rp2 import PIO, asm_pio
 
 SM_FREQ = 6_000_000
 MAXX = 2**16-1
+EMA = 0  # module-level exponential moving average value
+DUTY_CYCLE = 0  # exponential moving average of wave duty cycle to make PWM setting more accurate  # TODO
+ALPHA = 2048  # parameter that determines the smoothness of the ema: lower = smoother but more laggy
 
 
 # CHANGED 22:12 - in_ instead of mov to isr  was mov(isr, x)
@@ -141,6 +144,65 @@ def get_frequency(clk_freq=SM_FREQ):
     for hi, lo in smp:
         total += hi + lo
     return clk_freq * len(smp) / total / 2
+
+def reset_ema(val):
+
+    """When we change the note, don't want to wait for the ema to catch up, no matter how fast it is. Instead,
+    start off with a dummy value which is exactly what we wanted."""
+
+    global EMA
+    EMA = val
+
+def get_frequency_ema():
+
+    """exponential moving average for smoother measurement
+    returns the EMA and a flag, True or False, which tells us whether a new sample was included in the calculation"""
+
+    global EMA
+    global DUTY_CYCLE  # TODO actually implement
+
+    # need to weight more recent measurements higher
+
+    last = None  # last meaning the one we just looked at, not the final one
+    first = True
+
+    if sm_clocker.rx_fifo() < 2:  # we asked for a sample but there isn't one yet!
+        #  < 2 because we always discard the first sample
+        return  EMA, True # just bail and return the same measurement as last time
+        # this should be very rare but conceivable if we are measuring very slow waves very quickly
+        # the second value is a "stale" flag - if True, we know the measurement didn't change since last time
+        # this is important because we don't want the PID integral to wind up while continually measuring the same
+        # frequency where in reality the wave cycle just hasn't completed yet
+
+    while sm_clocker.rx_fifo() > 0:
+        if first:
+            d = sm_clocker.get()  # sadly have to throw away first measurement
+            # TODO - if the tuning loop reliably runs at > the maximum audio frequency, then we will never miss
+            # a wave cycle, the frequency counter will never stall, and we can use every measurement from it
+            first = False
+            continue
+
+        d = sm_clocker.get()
+        x = MAXX - (d >> 16)
+        # we were decrementing the counter, so need to subtract from max val to get elapsed clock cycles
+        y = MAXX - (d & 0xFFFF)  # splitting 32-bit number into 2 16-bit numbers
+
+        measurement = x + y  # this func just measures the wave cycle time, we are not interested in hi and lo parts
+
+        if not last:  # first measurement we are interested in
+            last = measurement
+            margin = last // 20  # tolerate no more than 5% error
+
+        delta = measurement - last
+
+        if abs(delta) < margin:  # measurement is within tolerance
+            #  EMA = ALPHA * measurement + (1 - ALPHA) * EMA  # you would use this for alpha = 0.3
+            EMA = ((ALPHA * measurement) >> 12) + (((4096 - ALPHA) * EMA) >> 12)  # fixed point version
+            # because it's a FIFO queue, the EMA gives precedence to the newest value we measured
+            last = measurement
+            margin = last // 20  # tolerate no more than 5% error
+
+    return EMA, False
     
 def get_cycle_time(clk_freq=SM_FREQ):
     

@@ -75,6 +75,13 @@ class Voice:
         self.osc = Oscillator(4, 5)  # we are manually specifying coarse and fine DAC index here
         # eventually need to give voice an address as well for polyphonic
 
+        # hacky way to specify values during empirical PID tuning
+        # 512, 128, 128 seem good!!
+        # not any more when changing to EMA.......
+        self.osc.pid.p = 128
+        self.osc.pid.i = 64
+        self.osc.pid.d = 512
+        
         self.osc.setup(retune=retune)
 
         self.monitoring = False  # set to true when this voice is connected to the tune bus for monitoring. Then we can
@@ -160,7 +167,8 @@ class Voice:
         # TODO: don't bother get'ing from a mod source that isn't in use
         coarse_correction = fine_corrected = 0
         if self.monitoring:
-            coarse_correction, fine_corrected = self.osc.correct()
+            pass
+            #coarse_correction, fine_corrected = self.osc.correct()  # TODO - correction function changed
             #print("freq corrections coarse and fine were: ", coarse_correction, fine_corrected)
 
         for idx, ls in enumerate(self.modulation_assignments):
@@ -272,6 +280,7 @@ down_notes = {}  # keep track of which voice is playing which note
 loopcount = 0
 loopstart = time.ticks_ms()
 
+# 96 is the highest MIDI note on the keyboard
 
 try:
     while 1:
@@ -283,8 +292,9 @@ try:
         controls_queue = MR.get_messages("controls")
 
         if len(notes_queue) > 1:
-            pass
+            #pass
             #print(notes_queue)
+            pass
 
         if controls_queue:
             for msg in controls_queue:
