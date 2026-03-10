@@ -40,12 +40,15 @@ def myspi():  # TODO: packing to put multiple instructions per word
     #set(x, 1)  # two instructions are packed into a 32-bit word
     #label("outer")
     set(pins, 1)  # enable high -> CS low -> DAC starts listening
+    irq(0)  # used to communicate with the tune latching pio, so it only toggles the latch when AEN is high
     set(y,11)  # counter for sending 12-bit DAC instruction
     label("bitloop")
     out(pins, 1).side(0) # put the data on MOSI pin and bring clock low
     nop().side(1)  # rising edge of clock so bit is read into DAC
     jmp(y_dec, "bitloop")  # repeat until we've written 12 bits of data
+    irq(clear, 0)
     set(pins, 0)  # enable low -> CS high -> data is latched in
+
     #jmp(x_dec, "outer")  # loop back to send the second instruction
 
 # address line manager, writes the binary address (0-7) to the output pins
@@ -58,17 +61,36 @@ def myspi():  # TODO: packing to put multiple instructions per word
 def addressmgr():
     out(pins, 3)
 
+@asm_pio(set_init=PIO.OUT_HIGH)
+def tune_latch_manager():
+
+    pull()  # block here and only proceed if we recieved a signal that we want to store the latch bit
+    wait(1, irq, 0)  # wait for address enable to go high (tune latch "saves" the chip select status)
+    # when aen is brought high, IRQ 0 is set by the myspi PIO
+    nop() [4]
+    set(pins, 0)  # pulse the latch to store the value (logical low from pi - transistor is off, +12V at collector)
+    nop() [16]
+    set(pins, 1)
+    nop()[16]
 
 
-sm_spi = rp2.StateMachine(2, myspi, freq=1000000, out_base=Pin(P_MOSI_PIN),
+sm_spi = rp2.StateMachine(7, myspi, freq=1000000, out_base=Pin(P_MOSI_PIN),
     set_base=Pin(P_AEN_PIN),
     sideset_base=Pin(P_SCK_PIN))
 sm_spi.active(1)
 
+
+ADDRPIN = Pin(P_ADDRESS_BASE_PIN)
+
 # 19, 20, 21 address pins
 # this state machine is accessed from within the main program loop
-ADDRESS_MANAGER = rp2.StateMachine(3, addressmgr, freq=1000000, out_base=Pin(P_ADDRESS_BASE_PIN))
+ADDRESS_MANAGER = rp2.StateMachine(3, addressmgr, freq=1000000, out_base=ADDRPIN)
 ADDRESS_MANAGER.active(1)
+
+TUNE_LATCH_MANAGER = rp2.StateMachine(6, tune_latch_manager, freq=1000000,
+                                      set_base=Pin(P_TUNE_LATCH_PIN),
+                                      )
+TUNE_LATCH_MANAGER.active(1)
 
 #admgr.put(0)  # TODO - this is temporary, we eventually need to manage addresses of multiple DACs
 
@@ -169,3 +191,9 @@ def send_dac_fraction(dac, val):
 
     v = floor(val * 255)
     send_dac_value(dac, v)
+
+def prepare_tune_latch():
+
+    # the next time chip select is lowered, tune latch signal will be sent to all the voices
+    # so the voice we are addressing stores the tune bit, and everything else stores nothing because not selected
+    TUNE_LATCH_MANAGER.put(1)  # just putting something in the FIFO causes the pio program to advance

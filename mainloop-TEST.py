@@ -1,11 +1,45 @@
 from pin_assignments import *
 from machine import Pin, I2C
 import time
+
+"""
+TUNE_LATCH_PIN = Pin(P_TUNE_LATCH_PIN,Pin.OUT,value=1)
+while 1:
+    time.sleep(0.01)
+    TUNE_LATCH_PIN.low()
+    time.sleep(0.01)
+    TUNE_LATCH_PIN.high()
+"""
+
+"""
+TEST_CS_PIN = Pin(P_AEN_PIN,Pin.OUT,value=0)
+#TEST_CS_PIN = Pin(P_TEST_CS_PIN,Pin.OUT,value=1)  # TODO - use actual CS when PCB is connected
+TUNE_LATCH_PIN = Pin(P_TUNE_LATCH_PIN,Pin.OUT,value=1)
+
+# for other testing just always connect the tune bus first thing
+time.sleep(0.01)
+#TEST_CS_PIN.low()  # logical high +12 V on CS
+TEST_CS_PIN.high()
+#time.sleep(0.01)
+TUNE_LATCH_PIN.low()  # rising edge of clock pin
+time.sleep(0.01)
+TUNE_LATCH_PIN.high()  # falling edge of clock, data is latched
+#time.sleep(0.01)
+#TEST_CS_PIN.high()  # data goes low but we saved the bit
+TEST_CS_PIN.low()
+
+del TEST_CS_PIN
+"""
+
+
 from array import array
 from readmidi import MidiReader
 import math
 from freq_count_nodma import freq_counter_cleanup, freq_count_reset
-from mydacs import send_dac_value, dac_setup, ADDRESS_MANAGER
+from mydacs import send_dac_value, dac_setup, ADDRESS_MANAGER, prepare_tune_latch
+
+prepare_tune_latch()  # just latch something to start off with
+time.sleep(0.1)  # make sure the latch state machine is ready to recieve the rising edge of AEN
 dac_setup()  # manages reset pin
 
 from oscillator import Oscillator
@@ -183,19 +217,23 @@ class Voice:
 
 # setting up tuning line
 
-TEST_CS_PIN = Pin(P_TEST_CS_PIN,Pin.OUT,value=1)  # TODO - use actual CS when PCB is connected
-TUNE_LATCH_PIN = Pin(P_TUNE_LATCH_PIN,Pin.OUT,value=1)
 
+#TEST_CS_PIN = AEN_PIN  # !!!!!! 11:57 03/08
+#TEST_CS_PIN = Pin(P_TEST_CS_PIN,Pin.OUT,value=1)  # TODO - use actual CS when PCB is connected
+#TUNE_LATCH_PIN = Pin(P_TUNE_LATCH_PIN,Pin.OUT,value=1)
+"""
 # for other testing just always connect the tune bus first thing
 time.sleep(0.01)
-TEST_CS_PIN.low()  # logical high +12 V on CS
+#TEST_CS_PIN.low()  # logical high +12 V on CS
+TEST_CS_PIN.high()
 time.sleep(0.01)
 TUNE_LATCH_PIN.low()  # rising edge of clock pin
 time.sleep(0.01)
 TUNE_LATCH_PIN.high()  # falling edge of clock, data is latched
 time.sleep(0.01)
-TEST_CS_PIN.high()  # data goes low but we saved the bit
-
+#TEST_CS_PIN.high()  # data goes low but we saved the bit
+TEST_CS_PIN.low()     
+"""
 # build all voices and modulation sources
 ADSRLIST = [ADSR2.ADSR(), ADSR2.ADSR(),ADSR2.ADSR(),ADSR2.ADSR(),ADSR2.ADSR(),ADSR2.ADSR(),ADSR2.ADSR(),ADSR2.ADSR()]
 LFOLIST = [LFO2.LFO(), LFO2.LFO(), LFO2.LFO(), LFO2.LFO(), LFO2.LFO(), LFO2.LFO(), LFO2.LFO(), LFO2.LFO()]
@@ -214,7 +252,7 @@ tempmodlist = [
                [LFOLIST[2],ADSRLIST[2]]
                ]
 
-V = Voice(tempmodlist, retune=False)
+V = Voice(tempmodlist, retune=True)
 V.monitoring = False  # TODO: handle monitoring of multiple voices
 VOICES = [V]  # in the future, there be more
 
@@ -233,6 +271,7 @@ down_notes = {}  # keep track of which voice is playing which note
 
 loopcount = 0
 loopstart = time.ticks_ms()
+
 
 try:
     while 1:
@@ -267,7 +306,15 @@ try:
                     down_notes = {}  # can't decay when only 1 voice
                     # this is TESTING code for single voice case and played note prio.
                     v.send(True, note)
-                    v.monitoring = True  # TODO - track which notes are monitored
+
+
+
+                    #!!!!!!!!!!!!!!!!!!!!!!!
+                    #v.monitoring = True  # TODO - track which notes are monitored
+                    #!!!!!!!!!!!!!!!!!!!!!!!
+
+
+
                     #print(f"Assigned note {note} to {v}")
                     down_notes[note] = v  # keep a reference so we can unplay note
                     break  # we only need to assign to a single voice
