@@ -16,8 +16,7 @@ SM_FREQ = 6_000_000
 MAXX = 2**16-1
 EMA = 0  # module-level exponential moving average value
 DUTY_CYCLE = 0  # exponential moving average of wave duty cycle to make PWM setting more accurate  # TODO
-ALPHA = 768  # parameter that determines the smoothness of the ema: lower = smoother but more laggy
-# 2048 good at 21:40
+ALPHA = 2048  # parameter that determines the smoothness of the ema: lower = smoother but more laggy
 
 # CHANGED 22:12 - in_ instead of mov to isr  was mov(isr, x)
 # also fixed MAXXX to have -1

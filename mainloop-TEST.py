@@ -79,8 +79,9 @@ class Voice:
         # 512, 128, 128 seem good!!
         # not any more when changing to EMA.......
         # 1024 512 1024 sems good ish
-        self.osc.pid.p = 512
-        self.osc.pid.i = 512
+        # changed res to 16000 (14 bit)
+        self.osc.pid.p = 6000
+        self.osc.pid.i = 36
         self.osc.pid.d = 4096
         
         self.osc.setup(retune=retune)

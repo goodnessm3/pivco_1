@@ -62,9 +62,9 @@ class PidController:
 
         # print("delta: ", delta)
 
-        pterm = (delta * self.p >> 12)
-        dterm = (slope * self.d >> 24)
-        iterm = (self.accumulated_error * self.i >> 24)
+        pterm = (delta * self.p >> 14)
+        dterm = (slope * self.d >> 26)
+        iterm = (self.accumulated_error * self.i >> 26)
 
         # correction = (delta >> self.p) + (self.accumulated_error >> self.i) - (delta >> self.d)
         correction = pterm - dterm + iterm
@@ -227,16 +227,24 @@ class Oscillator:
         """Step through all MIDI notes and establish coarse and fine DAC values to send, and store them"""
 
         note_index = 33
-        error_tolerance = 4  # "units" of log2(wavecount) error that we are willing to tolerate
+
         # 6 units corresponds to 1%
+        error_count_threshold = 4
+
 
         while note_index < 97:
             print("starting PID tuning...")
             self.pid.setpoint = NOTE_WAVECOUNTS[note_index]
             self.pid.reset()
             reset_ema(NOTE_WAVECOUNTS[note_index])  # optimistically say we measured what we wanted
-            corxn = 1000
-            error = 100
+
+            dwc = NOTE_WAVECOUNTS[note_index]
+            print("desired log wavecount: ", dwc)
+            #error_tolerance = int(dwc * 0.00025)  # % error rather than a static number
+            error_tolerance = 5  # note this is right at the limit of resolution for higher frequencies
+            # could use a higher clock speed state machine for the higher freqs?
+            # which would represent a different tolerance depending on the absolute value
+
             corxn = 0
             last_measurement = 0  # if we are tuning very low frequency notes, we might loop several times between
             # audio wave transitions. Need to ignore multiple identical measurements because the system just hasn't
@@ -244,36 +252,84 @@ class Oscillator:
 
             coarse = self.note_to_dac_signals(note_index)  # uses line fit and floats
 
+            # first, optimize the coarse value that is closest to the desired freq - want to avoid crossing over
+            # coarse increments during fine tuning
+
+            send_dac_value(self.f, 127)
+            last_delta = 999999
+            delta = 0
+            increment = 1
+            flipped = False
+            while 1:
+                print("in coarse loop, coarse = ", coarse)
+                send_dac_value(self.c, coarse)
+                time.sleep(0.001)
+                hi, lo, cnt = get_sample_reject_anomalies(min_samples=4)
+                wc = (hi + lo) // cnt
+                log_freq = fast_log2(wc)
+                delta = abs(dwc - log_freq)
+                if delta > last_delta:
+                    if flipped:
+                        coarse -= increment  # restore the previous value which turns out to be the best - "step back"
+                        break
+                    increment *= -1
+                    flipped = True
+                last_delta = delta
+                coarse += increment
+
+            print("finished optimizing coarse value")
+
             print(f"for note {note_index} sending {coarse} to dac")
-            print("step\terror\tcorrection")
+            print("allowed error is: ", error_tolerance)
+            print("step\terror\tEMA\tcorrection")
 
             send_dac_value(self.c, coarse)
             send_dac_value(self.f, 127)  # start by centering fine
             inc = 0
             err = 999  # arbitrary to start loop
+            error_counter = 0
+
+            # need to see more than this number of samples with error within tolerance to pass
             corrected = False
-            while abs(err) > error_tolerance:
+            error_alpha = 1800  # 0 to 4090 and determines the smoothing of the EMA on the error
+            fine_alpha = 1800  # ditto and smooths the PID output value that we capture at the end
+            error_ema = 999
+            fine_ema = 999
+            out_of_range_count = 0  # only change coarse increment if we sent 3 corrections out of range
+
+            #while abs(err) > error_tolerance:
+            #while error_counter < error_count_threshold:
+            while abs(error_ema) > error_tolerance:
 
                 if not corrected:
-                    # print(f"tuning note {note_index}")
-                    if corxn > 255:
-                        coarse += 1
-                        send_dac_value(self.c, coarse)
-                        send_dac_value(self.f, 127)
-                        self.pid.reset()
-                        # just re-centre fine to put us the furthest distance away from another coarse jump
+                    if abs(err) < error_tolerance:
+                        error_counter += 1
+                    else:
+                        error_counter = 0  # reset and keep hunting
+                    
+                    if corxn > 255:  # TODO: DRY
+                        out_of_range_count += 1
+                        if out_of_range_count > 2:
+                            coarse += 1
+                            send_dac_value(self.c, coarse)
+                            send_dac_value(self.f, 0)
+                            self.pid.reset()
+                            out_of_range_count = 0
+                            # just re-centre fine to put us the furthest distance away from another coarse jump
                     elif corxn < 0:
-                        coarse -= 1
-                        send_dac_value(self.c, coarse)
-                        send_dac_value(self.f, 127)
-                        self.pid.reset()
+                        out_of_range_count += 1
+                        if out_of_range_count > 2:
+                            coarse -= 1
+                            send_dac_value(self.c, coarse)
+                            send_dac_value(self.f, 0)
+                            self.pid.reset()
+                            out_of_range_count = 0
                     else:
                         send_dac_value(self.f, corxn)
 
+                    send_dac_value(self.f, corxn)
                     corrected = True
 
-                #freq_count_reset()  # flush old values from frequency counter FIFO
-                #hi, lo, count = get_sample_reject_anomalies(min_samples=4)
                 #measured = (hi + lo) // count  # measurement of the actual wavecycle time
                 measured, stale = get_frequency_ema(min_samples=3)
                 if stale:
@@ -290,14 +346,17 @@ class Oscillator:
                 # time.sleep(0.2)
                 corxn = self.pid.get_correction(log_measured)
                 err = self.pid.get_error()
+                error_ema = ((error_alpha * err) + ((4096 - error_alpha) * error_ema)) >> 12
+                fine_ema = ((fine_alpha * corxn) + ((4096 - fine_alpha) * fine_ema)) >> 12
                 tnow = time.ticks_us()
                 # print(f"calculated correction: {corxn}")
-                print(f"{tnow}\t{err}\t{corxn}")
+                print(f"{tnow}\t{err}\t{error_ema}\t{corxn}")
                 inc += 1
 
             self.coarse_array[note_index] = coarse
-            self.fine_array[note_index] = corxn
-
+            #self.fine_array[note_index] = corxn
+            self.fine_array[note_index] = fine_ema  # use the smoothed PID outputs during the same period
+            # that the error was smoothed
             # time.sleep(1)
 
             inc = 0
