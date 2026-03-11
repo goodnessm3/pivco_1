@@ -306,7 +306,7 @@ class Oscillator:
                         error_counter += 1
                     else:
                         error_counter = 0  # reset and keep hunting
-                    
+
                     if corxn > 255:  # TODO: DRY
                         out_of_range_count += 1
                         if out_of_range_count > 2:
