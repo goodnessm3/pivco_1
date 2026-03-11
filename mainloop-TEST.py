@@ -78,9 +78,10 @@ class Voice:
         # hacky way to specify values during empirical PID tuning
         # 512, 128, 128 seem good!!
         # not any more when changing to EMA.......
-        self.osc.pid.p = 128
-        self.osc.pid.i = 64
-        self.osc.pid.d = 512
+        # 1024 512 1024 sems good ish
+        self.osc.pid.p = 512
+        self.osc.pid.i = 512
+        self.osc.pid.d = 4096
         
         self.osc.setup(retune=retune)
 

@@ -1,6 +1,6 @@
 from array import array
 from freq_count_nodma import get_sample_reject_anomalies, longer_sample, sample_to_frequency, freq_count_reset, \
-    get_frequency_ema
+    get_frequency_ema, reset_ema
 from line_fitter import Fitter
 from mydacs import send_dac_value
 import time
@@ -234,6 +234,7 @@ class Oscillator:
             print("starting PID tuning...")
             self.pid.setpoint = NOTE_WAVECOUNTS[note_index]
             self.pid.reset()
+            reset_ema(NOTE_WAVECOUNTS[note_index])  # optimistically say we measured what we wanted
             corxn = 1000
             error = 100
             corxn = 0
@@ -259,11 +260,13 @@ class Oscillator:
                         coarse += 1
                         send_dac_value(self.c, coarse)
                         send_dac_value(self.f, 127)
+                        self.pid.reset()
                         # just re-centre fine to put us the furthest distance away from another coarse jump
                     elif corxn < 0:
                         coarse -= 1
                         send_dac_value(self.c, coarse)
                         send_dac_value(self.f, 127)
+                        self.pid.reset()
                     else:
                         send_dac_value(self.f, corxn)
 
@@ -272,7 +275,7 @@ class Oscillator:
                 #freq_count_reset()  # flush old values from frequency counter FIFO
                 #hi, lo, count = get_sample_reject_anomalies(min_samples=4)
                 #measured = (hi + lo) // count  # measurement of the actual wavecycle time
-                measured, stale = get_frequency_ema()
+                measured, stale = get_frequency_ema(min_samples=3)
                 if stale:
                     time.sleep(0.0001)
                     continue

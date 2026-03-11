@@ -16,8 +16,8 @@ SM_FREQ = 6_000_000
 MAXX = 2**16-1
 EMA = 0  # module-level exponential moving average value
 DUTY_CYCLE = 0  # exponential moving average of wave duty cycle to make PWM setting more accurate  # TODO
-ALPHA = 2048  # parameter that determines the smoothness of the ema: lower = smoother but more laggy
-
+ALPHA = 768  # parameter that determines the smoothness of the ema: lower = smoother but more laggy
+# 2048 good at 21:40
 
 # CHANGED 22:12 - in_ instead of mov to isr  was mov(isr, x)
 # also fixed MAXXX to have -1
@@ -153,7 +153,7 @@ def reset_ema(val):
     global EMA
     EMA = val
 
-def get_frequency_ema():
+def get_frequency_ema(min_samples=1):
 
     """exponential moving average for smoother measurement
     returns the EMA and a flag, True or False, which tells us whether a new sample was included in the calculation"""
@@ -166,7 +166,7 @@ def get_frequency_ema():
     last = None  # last meaning the one we just looked at, not the final one
     first = True
 
-    if sm_clocker.rx_fifo() < 2:  # we asked for a sample but there isn't one yet!
+    if sm_clocker.rx_fifo() < min_samples + 1:  # we asked for a sample but there isn't one yet!
         #  < 2 because we always discard the first sample
         return  EMA, True # just bail and return the same measurement as last time
         # this should be very rare but conceivable if we are measuring very slow waves very quickly
@@ -197,6 +197,9 @@ def get_frequency_ema():
 
         if abs(delta) < margin:  # measurement is within tolerance
             #  EMA = ALPHA * measurement + (1 - ALPHA) * EMA  # you would use this for alpha = 0.3
+            # todo actually - we can be more clever about re-initializing the EMA, just use the first
+            # todo measured value for both parts if EMA == 0
+            # need to give a few cycles for the freq to stabilize, we are measuring too fast rn!!!
             EMA = ((ALPHA * measurement) >> 12) + (((4096 - ALPHA) * EMA) >> 12)  # fixed point version
             # because it's a FIFO queue, the EMA gives precedence to the newest value we measured
             last = measurement
