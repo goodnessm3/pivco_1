@@ -6,11 +6,14 @@ from oscillator import Oscillator
 
 class Voice:
 
-    def __init__(self, mods, retune=True, cutoff_freq_tracking=True):
+    def __init__(self, addr, mods, modulation_array_reference, retune=True, cutoff_freq_tracking=True):
 
         # setting static values but in future these will be args
 
-        self.identity = 0  # HARDCODED for now, but this is the "caller" argument for mod sources
+        self.address = addr  # HARDCODED for now, but this is the "caller" argument for mod sources
+        self.offset = self.address * 8  # offset in mod array
+        self.modulation_array = modulation_array_reference  # this is where we write the values to send
+        # to the DAC. The actual transmission to the DAC is handled by another function (possibly on another core)
 
         # !! HACK ALERT - PWM INDEX IS HARDCODED HERE !! #
         if retune:
@@ -28,6 +31,7 @@ class Voice:
         self.osc.pid.p = 6000
         self.osc.pid.i = 36
         self.osc.pid.d = 4096
+        # todo - define these elsewhere once optimized
 
         self.osc.setup(retune=retune)
 
@@ -62,8 +66,9 @@ class Voice:
         # we are storing names because we use getattr. Would probably be better to just do by list index
         # TODO: by list index instead
 
-        self.last_sent = [0, 0, 0, 0, 0, 0, 0, 0]  # don't update a DAC if the value hasn't changed. Use this
+        #self.last_sent = [0, 0, 0, 0, 0, 0, 0, 0]  # don't update a DAC if the value hasn't changed. Use this
         # to keep track of the last value we sent to the DAC for a given channel
+        # 03/11: no longer need to track this because the SPI transmission code will check for changes
 
         # current statuses
         self.note_down = False
@@ -98,12 +103,12 @@ class Voice:
                 if self.cutoff_freq_tracking:
                     self.filter_track = FILTER_CVS[midinote]
                 for envelope in self.adsrs:
-                    envelope.gate(self.identity, True)  # envelopes will start attacking
+                    envelope.gate(self.address, True)  # envelopes will start attacking
 
         elif not note_down and self.note_down:
             self.note_down = False
             for envelope in self.adsrs:
-                envelope.gate(self.identity, False)  # tell envelopes to release
+                envelope.gate(self.address, False)  # tell envelopes to release
             # we can grab this voice for another purpose if needed in which case the envelopes are remembering
             # their own states and won't "glitch" if restarted
 
@@ -121,7 +126,7 @@ class Voice:
             for entity in ls:
                 # print(entity)
                 # print(entity.get(self.identity))
-                modulation_sum += entity.get(self.identity) >> 8  # mod sources are higher-res
+                modulation_sum += entity.get(self.address) >> 8  # mod sources are higher-res
                 # TODO - just decide on a resolution and stick to it!! Voices should be 16-bit too
 
             base_variable = self.variable_names[idx]  # so we can refer by name
@@ -142,12 +147,17 @@ class Voice:
                 modulation_sum = 255 - modulation_sum  # HACK ALERT! The filter is BACKWARDS LOL
                 # in the circuit higher CV -> lower cutoff, so this inversion makes it so high CV -> more open
 
+            """
             if self.last_sent[idx] == modulation_sum:
                 pass  # don't bother sending a DAC signal at all if nothing changed
             else:
                 # print("sending", modulation_sum, "to", idx)
-                send_dac_value(idx, modulation_sum)
-                self.last_sent[idx] = modulation_sum
+                #send_dac_value(idx, modulation_sum)
+                #self.last_sent[idx] = modulation_sum
+            """
+
+            self.modulation_array[self.offset + idx] = modulation_sum
+            # write out the modulation to be picked up and sent out by the SPI transmission code
 
     def export(self):
 

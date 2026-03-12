@@ -2,6 +2,7 @@ from pin_assignments import *
 from machine import Pin, I2C
 import time
 from voice import Voice
+from dac_manager import DacManager
 """
 TUNE_LATCH_PIN = Pin(P_TUNE_LATCH_PIN,Pin.OUT,value=1)
 while 1:
@@ -57,6 +58,13 @@ DISPLAY = LCD(i2c)  # set up the text display
 # external mix cv, suboctave, VCA, PWM, coarse osc, fine osc, filter c/o, filter res
 #        0            1        2    3     4            5         6            7
 
+# these are the modulations for each of 6 voices, channels 1-8 on the DAC. The offset is the voice number
+# so index // 8 is voice, index % 8 is the dac channel.
+modulation_array = array("B", [0] * 48)
+update_masks = array("B", [0] * 8)
+# which DAC parameters changed? This is a bitmask, so 00001000 -> only change that channel
+active_voices = 0  # bitmask
+
 
 
 
@@ -101,13 +109,14 @@ tempmodlist = [
                [LFOLIST[2],ADSRLIST[2]]
                ]
 
-V = Voice(tempmodlist, retune=False)
+V = Voice(0, tempmodlist, modulation_array_reference=modulation_array, retune=False)
 V.monitoring = False  # TODO: handle monitoring of multiple voices
 VOICES = [V]  # in the future, there be more
 
 MR = MidiReader()
 CONTROLS = Controls(VOICES, LFOLIST, ADSRLIST)
 DM = DisplayManager(VOICES, LFOLIST, ADSRLIST)
+DAC_MANAGER = DacManager(modulation_array, 1)  # todo: active voices should be a bitmask
 
 print("Loading saved settings...")
 settings_manager.load_object_settings(VOICES, ADSRLIST, LFOLIST)
@@ -123,9 +132,12 @@ loopstart = time.ticks_ms()
 
 # 96 is the highest MIDI note on the keyboard
 
+
+
 try:
     while 1:
-        ADDRESS_MANAGER.put(0)  # TODO: eventually this will handle addresses 0-7
+        #ADDRESS_MANAGER.put(0)  # TODO: eventually this will handle addresses 0-7
+        DAC_MANAGER.update()
         loopcount += 1
         DISPLAY.draw_screen()
         MR.read()  # induce the MidiReader to compile messages to read out         
