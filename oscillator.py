@@ -246,10 +246,6 @@ class Oscillator:
             # which would represent a different tolerance depending on the absolute value
 
             corxn = 0
-            last_measurement = 0  # if we are tuning very low frequency notes, we might loop several times between
-            # audio wave transitions. Need to ignore multiple identical measurements because the system just hasn't
-            # had time to respond to the PID signal yet.
-
             coarse = self.note_to_dac_signals(note_index)  # uses line fit and floats
 
             # first, optimize the coarse value that is closest to the desired freq - want to avoid crossing over
