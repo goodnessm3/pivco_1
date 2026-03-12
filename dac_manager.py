@@ -34,4 +34,4 @@ class DacManager:
             if new == self.modulation_array_copy[addr]:
                 continue
             self.modulation_array_copy[addr] = new
-            send_dac_value(i, new)
+            send_dac_value(i, new)  # todo: relocate make_dac_bytes func here, probably retire other dac module

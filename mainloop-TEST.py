@@ -3,6 +3,7 @@ from machine import Pin, I2C
 import time
 from voice import Voice
 from dac_manager import DacManager
+import _thread
 """
 TUNE_LATCH_PIN = Pin(P_TUNE_LATCH_PIN,Pin.OUT,value=1)
 while 1:
@@ -132,12 +133,48 @@ loopstart = time.ticks_ms()
 
 # 96 is the highest MIDI note on the keyboard
 
+RUNNING = True
+
+def dac_loop(running_status, dacmgr):
+
+    global RUNNING
+
+    fast_counter = 0
+    fast_start_time = time.ticks_ms()
+
+    running = running_status  # ????
+    dacmgr = dacmgr
+
+    print("DAC update loop started on separate core.")
+    #try:
+    while 1:
+        if RUNNING:  # doesn't seem able to see the global variable
+        #if running:
+            dacmgr.update()
+            fast_counter += 1
+        else:
+            break
+
+    print("DAC loop core exited via running flag")
+    end_time = time.ticks_ms()
+    delta = time.ticks_diff(end_time, fast_start_time)
+    rate = fast_counter/delta * 1000
+    print(f"{fast_counter} cycles in {delta} ms: {rate} per second.")
+    print("second core exited cleanly")
+    #finally:
+        #print("Exited DAC loop via keyboard interrupt")
+
+_thread.start_new_thread(dac_loop, (RUNNING, DAC_MANAGER))
+
+#time.sleep(2)
+#RUNNING = False
+#time.sleep(2)  # give the other core time to drop out of its loop
 
 
 try:
     while 1:
         #ADDRESS_MANAGER.put(0)  # TODO: eventually this will handle addresses 0-7
-        DAC_MANAGER.update()
+        #DAC_MANAGER.update()
         loopcount += 1
         DISPLAY.draw_screen()
         MR.read()  # induce the MidiReader to compile messages to read out         
@@ -192,7 +229,10 @@ try:
         for q in VOICES:
             q.update()
             
-
+except KeyboardInterrupt:
+    RUNNING = False
+    print("Waiting for other core to exit")
+    time.sleep(1)
 
 finally:
     print("count", loopcount)
@@ -200,12 +240,15 @@ finally:
 
     lps = loopcount / total_time * 1000
     print(f"Averaged {lps} loops per second over {total_time} ms.")
+    print("Main core exited cleanly")
     
     settings_manager.save_object_settings(VOICES, ADSRLIST, LFOLIST)
     freq_counter_cleanup()
     send_dac_value(5, 0)  # manually turn off single voice's VCA
     for q in VOICES:
         q.osc.save_arrays()
+
+
         
     
 
