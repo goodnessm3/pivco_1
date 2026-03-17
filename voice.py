@@ -1,3 +1,4 @@
+from array import array
 from mydacs import send_dac_value
 import ADSR2
 from freq_count_nodma import freq_count_reset
@@ -66,7 +67,7 @@ class Voice:
         # we are storing names because we use getattr. Would probably be better to just do by list index
         # TODO: by list index instead
 
-        #self.last_sent = [0, 0, 0, 0, 0, 0, 0, 0]  # don't update a DAC if the value hasn't changed. Use this
+        self.last_sent = array("B", [0] * 8)  # don't update a DAC if the value hasn't changed. Use this
         # to keep track of the last value we sent to the DAC for a given channel
         # 03/11: no longer need to track this because the SPI transmission code will check for changes
 
@@ -147,16 +148,16 @@ class Voice:
                 modulation_sum = 255 - modulation_sum  # HACK ALERT! The filter is BACKWARDS LOL
                 # in the circuit higher CV -> lower cutoff, so this inversion makes it so high CV -> more open
 
-            """
+
             if self.last_sent[idx] == modulation_sum:
                 pass  # don't bother sending a DAC signal at all if nothing changed
             else:
                 # print("sending", modulation_sum, "to", idx)
-                #send_dac_value(idx, modulation_sum)
-                #self.last_sent[idx] = modulation_sum
-            """
+                send_dac_value(idx, modulation_sum)
+                self.last_sent[idx] = modulation_sum
 
-            self.modulation_array[self.offset + idx] = modulation_sum
+
+            #self.modulation_array[self.offset + idx] = modulation_sum
             # write out the modulation to be picked up and sent out by the SPI transmission code
 
     def export(self):

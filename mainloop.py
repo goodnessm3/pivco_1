@@ -1,8 +1,8 @@
 from pin_assignments import *
 from machine import Pin, I2C
 import time
-from voice import Voice
-from dac_manager import DacManager
+
+
 
 """
 TUNE_LATCH_PIN = Pin(P_TUNE_LATCH_PIN,Pin.OUT,value=1)
@@ -40,11 +40,15 @@ import math
 from freq_count_nodma import freq_counter_cleanup, freq_count_reset
 from mydacs import send_dac_value, dac_setup, ADDRESS_MANAGER, prepare_tune_latch
 
+ADDRESS_MANAGER.put(1)  # !!!!!!!!!!! for testing new card!!!!
 prepare_tune_latch()  # just latch something to start off with
-prepare_tune_latch()
-prepare_tune_latch()
 time.sleep(0.1)  # make sure the latch state machine is ready to recieve the rising edge of AEN
 dac_setup()  # manages reset pin
+
+# IMPORTANT! These need to be imported AFTER dac setup. But why????
+from voice import Voice
+from dac_manager import DacManager
+# if they are imported before, then the tuning latch doesn't work???
 
 from lcd1602 import LCD
 import ADSR2, LFO2
@@ -112,14 +116,20 @@ tempmodlist = [
                [LFOLIST[2],ADSRLIST[2]]
                ]
 
-V = Voice(0, tempmodlist, modulation_array_reference=modulation_array, retune=True)
+
+
+# todo: address of voice messes up address manager!??!?
+V = Voice(0, tempmodlist, modulation_array_reference=modulation_array, retune=False)
+#VV = Voice(0, tempmodlist, modulation_array_reference=modulation_array, retune=False)
+#!!! ADDR!!!
 V.monitoring = False  # TODO: handle monitoring of multiple voices
-VOICES = [V]  # in the future, there be more
+#VV.monitoring = False
+VOICES = [V,]  # in the future, there be more
 
 MR = MidiReader()
 CONTROLS = Controls(VOICES, LFOLIST, ADSRLIST)
 DM = DisplayManager(VOICES, LFOLIST, ADSRLIST)
-DAC_MANAGER = DacManager(modulation_array, 1)  # todo: active voices should be a bitmask
+#DAC_MANAGER = DacManager(modulation_array, 1)  # todo: active voices should be a bitmask
 
 print("Loading saved settings...")
 settings_manager.load_object_settings(VOICES, ADSRLIST, LFOLIST)
@@ -140,9 +150,12 @@ loopstart = time.ticks_ms()
 
 try:
     while 1:
+        #send_dac_value(5, 128)  # manually turn off single voice's VCA
+        #time.sleep(1)
+        #continue
 
         #ADDRESS_MANAGER.put(0)  # TODO: eventually this will handle addresses 0-7
-        DAC_MANAGER.update()
+        #DAC_MANAGER.update()
         loopcount += 1
         DISPLAY.draw_screen()
         MR.read()  # induce the MidiReader to compile messages to read out         
@@ -185,7 +198,10 @@ try:
 
                     #print(f"Assigned note {note} to {v}")
                     down_notes[note] = v  # keep a reference so we can unplay note
-                    break  # we only need to assign to a single voice
+
+                    # !!!!!!!!!!!!!! remove break to play both at once
+
+                    #break  # we only need to assign to a single voice
             else:  # False, meaning note up
                 voice = down_notes.get(note, None)
                 # there might be a note up signal for an uplayed note
