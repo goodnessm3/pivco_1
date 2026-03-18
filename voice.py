@@ -106,6 +106,10 @@ class Voice:
                 for envelope in self.adsrs:
                     envelope.gate(self.address, True)  # envelopes will start attacking
 
+        elif note_down and self.note_down:  # new....... maybe too self-referential
+            self.send(False)  # cancel current note first, which resets envelope, etc
+            self.send(True, midinote)
+
         elif not note_down and self.note_down:
             self.note_down = False
             for envelope in self.adsrs:

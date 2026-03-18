@@ -55,10 +55,11 @@ def myspi():  # TODO: packing to put multiple instructions per word
 @asm_pio(
     out_init=(PIO.OUT_LOW,) *3,
     out_shiftdir=PIO.SHIFT_RIGHT,
-    autopull=True,
-    pull_thresh=3,
-)
+    autopull=False,
+
+)  # pull_thresh=3,
 def addressmgr():
+    pull()
     out(pins, 3)
 
 @asm_pio(set_init=PIO.OUT_HIGH)

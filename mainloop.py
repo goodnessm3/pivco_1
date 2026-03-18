@@ -40,10 +40,15 @@ import math
 from freq_count_nodma import freq_counter_cleanup, freq_count_reset
 from mydacs import send_dac_value, dac_setup, ADDRESS_MANAGER, prepare_tune_latch
 
-ADDRESS_MANAGER.put(1)  # !!!!!!!!!!! for testing new card!!!!
+ADDRESS_MANAGER.put(0)  # !!!!!!!!!!! for testing new card!!!!
 prepare_tune_latch()  # just latch something to start off with
 time.sleep(0.1)  # make sure the latch state machine is ready to recieve the rising edge of AEN
-dac_setup()  # manages reset pin
+
+for x in range(2):  # !!!!!!!! TEMP - this is the number of voices, each must be setupped
+    ADDRESS_MANAGER.put(x)
+    time.sleep(0.1)
+    dac_setup()  # manages reset pin
+
 
 # IMPORTANT! These need to be imported AFTER dac setup. But why????
 from voice import Voice
@@ -118,13 +123,17 @@ tempmodlist = [
 
 
 
-# todo: address of voice messes up address manager!??!?
+
+ADDRESS_MANAGER.put(0)
 V = Voice(0, tempmodlist, modulation_array_reference=modulation_array, retune=False)
-#VV = Voice(0, tempmodlist, modulation_array_reference=modulation_array, retune=False)
+prepare_tune_latch()
+ADDRESS_MANAGER.put(1)
+VV = Voice(1, tempmodlist, modulation_array_reference=modulation_array, retune=False)
 #!!! ADDR!!!
 V.monitoring = False  # TODO: handle monitoring of multiple voices
-#VV.monitoring = False
-VOICES = [V,]  # in the future, there be more
+VV.monitoring = False
+VOICES = [V, VV]  # in the future, there be more
+# voices must appear in this list in ascending address order for the address manager to work
 
 MR = MidiReader()
 CONTROLS = Controls(VOICES, LFOLIST, ADSRLIST)
@@ -135,9 +144,9 @@ print("Loading saved settings...")
 settings_manager.load_object_settings(VOICES, ADSRLIST, LFOLIST)
 print("Done")
 
-down_notes = {}  # keep track of which voice is playing which note
+HELD_NOTES = array("B", [0] * 96)  # keep track of which voice is playing which note
  # so we can send key-up signals to them
- # todo - this should be an array
+ # index = midi note, value = the voice that is playing the note
 
 
 loopcount = 0
@@ -146,7 +155,8 @@ loopstart = time.ticks_ms()
 # 96 is the highest MIDI note on the keyboard
 #settings_manager.save_object_settings(VOICES, ADSRLIST, LFOLIST)
 
-
+NEXT_VOICE = 0  # the address of where we will send the newest note. Increments and loops around.
+VOICE_COUNT = len(VOICES)
 
 try:
     while 1:
@@ -182,12 +192,29 @@ try:
         
         for status, note in notes_queue:  # tuples of freq, true/false
             if status:  # True, want to play a new note
+                VOICES[NEXT_VOICE].send(True, note)
+                HELD_NOTES[note] = NEXT_VOICE  # store the address so we can "un-play" this note on key up
+                print("sent note on to voice ", VOICES[NEXT_VOICE])
+
+            else:  # TODO - just do it better OK
+                addr = HELD_NOTES[note]
+                VOICES[addr].send(False)
+                HELD_NOTES[note] = 0
+                print("Send note off to voice ", addr)
+
+            NEXT_VOICE += 1  # todo - what if one note held and others come on and off, need to be cleverer
+
+            if NEXT_VOICE >= VOICE_COUNT:
+                NEXT_VOICE = 0  # wrap and start re-using voices if all are occupied
+
+
+                """
                 for v in VOICES:  # find the first available voice
                     v.send(False)  # terminate current note
                     down_notes = {}  # can't decay when only 1 voice
                     # this is TESTING code for single voice case and played note prio.
                     v.send(True, note)
-
+                """
 
 
                     #!!!!!!!!!!!!!!!!!!!!!!!
@@ -197,11 +224,13 @@ try:
 
 
                     #print(f"Assigned note {note} to {v}")
-                    down_notes[note] = v  # keep a reference so we can unplay note
+                    #down_notes[note] = v  # keep a reference so we can unplay note
 
                     # !!!!!!!!!!!!!! remove break to play both at once
 
-                    #break  # we only need to assign to a single voice
+
+
+            """        
             else:  # False, meaning note up
                 voice = down_notes.get(note, None)
                 # there might be a note up signal for an uplayed note
@@ -209,9 +238,15 @@ try:
                 if voice:
                     voice.send(False)  # free up voice
                     #print(f"freeing voice {voice}")
-                    
-        for q in VOICES:
-            q.update()
+            """
+
+        for i in range(VOICE_COUNT):
+            #print("address update ", i)
+            ADDRESS_MANAGER.put(i)
+            VOICES[i].update()
+            # todo - need to update when decaying, but want to avoid when absolutely nothing happening
+        #for q in VOICES:
+            #q.update()
 
 
 finally:
@@ -226,6 +261,7 @@ finally:
     try:  # in testing with Thonny, sometimes we will get a second keyboard interrupt during the file writing
         # seems intermittent, at least we can detect when it happens.
         settings_manager.save_object_settings(VOICES, ADSRLIST, LFOLIST)
+
 
         for q in VOICES:
             q.osc.save_arrays()
