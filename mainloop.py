@@ -107,7 +107,6 @@ TEST_CS_PIN.low()
 ADSRLIST = [ADSR2.ADSR(), ADSR2.ADSR(),ADSR2.ADSR(),ADSR2.ADSR(),ADSR2.ADSR(),ADSR2.ADSR(),ADSR2.ADSR(),ADSR2.ADSR()]
 LFOLIST = [LFO2.LFO(), LFO2.LFO(), LFO2.LFO(), LFO2.LFO(), LFO2.LFO(), LFO2.LFO(), LFO2.LFO(), LFO2.LFO()]
 
-# TODO - numbers are all messed up since changing to PCB DAC order
 # TODO - rather than LFO and ADSR select, do parameter select, each parameter having its own LFO and ADSR
 # TODO - if the depth of a mod source is set to 0 then it is considered to be turned off.
 tempmodlist = [
@@ -144,9 +143,10 @@ print("Loading saved settings...")
 settings_manager.load_object_settings(VOICES, ADSRLIST, LFOLIST)
 print("Done")
 
-HELD_NOTES = array("B", [0] * 96)  # keep track of which voice is playing which note
+HELD_NOTES = array("B", [0] * 97)  # keep track of which voice is playing which note
  # so we can send key-up signals to them
  # index = midi note, value = the voice that is playing the note
+CURRENT_NOTES = array("B", [0] * 8)  # which note is played by which voice?
 
 
 loopcount = 0
@@ -155,16 +155,20 @@ loopstart = time.ticks_ms()
 # 96 is the highest MIDI note on the keyboard
 #settings_manager.save_object_settings(VOICES, ADSRLIST, LFOLIST)
 
-NEXT_VOICE = 0  # the address of where we will send the newest note. Increments and loops around.
-VOICE_COUNT = len(VOICES)
+#NEXT_VOICE = 0  # the address of where we will send the newest note. Increments and loops around.
+#VOICE_COUNT = len(VOICES)
+VOICE_COUNT = 2
+
+from collections import deque
+VOICE_USE = deque([], 8)
+
+# arbitrarily order the voices into the deque so they all appear once
+VOICE_USE.append(0)
+VOICE_USE.append(1)  # TODO - decent start but need better voice assignment algorithm that picks an unused voice
 
 try:
     while 1:
-        #send_dac_value(5, 128)  # manually turn off single voice's VCA
-        #time.sleep(1)
-        #continue
 
-        #ADDRESS_MANAGER.put(0)  # TODO: eventually this will handle addresses 0-7
         #DAC_MANAGER.update()
         loopcount += 1
         DISPLAY.draw_screen()
@@ -179,6 +183,7 @@ try:
 
         if controls_queue:
             for msg in controls_queue:
+                #print(msg)
                 CONTROLS.process_control_signal(*msg)
                 ret = CONTROLS.get_updated()  # todo - careful we aren't discarding things
                 if not ret:
@@ -192,20 +197,26 @@ try:
         
         for status, note in notes_queue:  # tuples of freq, true/false
             if status:  # True, want to play a new note
+                NEXT_VOICE = VOICE_USE.popleft()
                 VOICES[NEXT_VOICE].send(True, note)
                 HELD_NOTES[note] = NEXT_VOICE  # store the address so we can "un-play" this note on key up
+                CURRENT_NOTES[NEXT_VOICE] = note
+                VOICE_USE.append(NEXT_VOICE)  # so we can keep a record of which key was least recently pressed
                 print("sent note on to voice ", VOICES[NEXT_VOICE])
+                print("deque ", VOICE_USE)
 
             else:  # TODO - just do it better OK
                 addr = HELD_NOTES[note]
-                VOICES[addr].send(False)
+                if CURRENT_NOTES[addr] == note:
+                    VOICES[addr].send(False)  # only need to do this if the voice didn't get stolen in the meantime
+                    # we don't want to prematurely terminate the stolen note.
                 HELD_NOTES[note] = 0
                 print("Send note off to voice ", addr)
 
-            NEXT_VOICE += 1  # todo - what if one note held and others come on and off, need to be cleverer
+            #NEXT_VOICE += 1  # todo - what if one note held and others come on and off, need to be cleverer
 
-            if NEXT_VOICE >= VOICE_COUNT:
-                NEXT_VOICE = 0  # wrap and start re-using voices if all are occupied
+            #if NEXT_VOICE >= VOICE_COUNT:
+                #NEXT_VOICE = 0  # wrap and start re-using voices if all are occupied
 
 
                 """

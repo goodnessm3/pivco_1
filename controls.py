@@ -81,6 +81,10 @@ class Controls:
             return  # TODO - fill in later
         elif channel == 85:  # generic entry for any value
             return  # TODO - fill in later
+        elif channel == 23:
+            if value > 127:
+                print("tap button - use for graceful shutdown")  # TODO
+            return
         elif channel == 19:  # envelope select
             self.selected_adsr = listindex(self.adsr_list, value)
             self.selected_object = "ADSR"

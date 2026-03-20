@@ -1,6 +1,7 @@
 
 from wavetables import EXPO
 from myutils import fpmult
+from array import array
 
 try:
     from time import ticks_us, ticks_diff
@@ -47,16 +48,19 @@ class ADSR:
 
         self._depth = 65535
 
-        self.gate_starts = {}  # a dictionary of caller: start time in microseconds
-        self.gate_status = {}  # caller: True/False - gate signal. True = gate is open
-        self.level = 0  # current output, 0-32767
-        self.sustaining = False
-        self.decaying = False
-        self.attacking = False
-        self.releasing = False
-        self.releasing_from = None  # we can't always assume we are releasing from the sustain level if note was
+        self.gate_starts = array("I", [0] * 8)  # a dictionary of caller: start time in microseconds
+        self.gate_status = 0  # caller: True/False - gate signal. True = gate is open
+        self.level = array("I", [0] * 8)  # current output, 0-32767
+        # BIT MASKS:
+        self.sustaining = 0
+        self.decaying = 0
+        self.attacking = 0
+        self.releasing = 0
+        self.releasing_from = array("I", [0] * 8)
+        # we can't always assume we are releasing from the sustain level if note was
         # released during decay phase
-        self.attack_fastforward = 0  # array offset if we want to start attacking from a higher base level
+        self.attack_fastforward = array("I", [0] * 8)
+        # array offset if we want to start attacking from a higher base level
 
     def export(self):
 
@@ -71,12 +75,12 @@ class ADSR:
         self.depth = ls[4]
 
 
-    def get_fastforward(self):
+    def get_fastforward(self, caller):
 
         ind = -1
         l = 0
         arrlength = len(self.arr)
-        while l < self.level and ind < arrlength - 1:
+        while l < self.level[caller] and ind < arrlength - 1:
             ind += 1
             l = 65535 - self.arr[ind]
         return ind
@@ -144,20 +148,23 @@ class ADSR:
         and decay phases. When status=False, the decay phase commences."""
 
         self.gate_starts[caller] = ticks_us()
-        self.gate_status[caller] = status
+        if status:
+            self.gate_status |= (1 << caller)  # turn this address's bit on
+        else:
+            self.gate_status &= 0xFF ^ (1 << caller)  # turn this address's bit off
 
         # if we recieved gate on or off, then we aren't in either of these states:
-        self.decaying = False
-        self.sustaining = False
-        self.releasing_from = self.level  # store the level to use for vertically scaling the next phase
+        self.decaying &= 0xFF ^ (1 << caller)
+        self.sustaining &= 0xFF ^ (1 << caller)
+        self.releasing_from[caller] = self.level[caller]  # store the level to use for vertically scaling the next phase
 
         if status:
-            self.attacking = True
-            self.releasing = False
-            self.attack_fastforward = self.get_fastforward()
+            self.attacking |= (1 << caller)
+            self.releasing &= 0xFF ^ (1 << caller)
+            self.attack_fastforward[caller] = self.get_fastforward(caller)
         else:
-            self.attacking = False
-            self.releasing = True
+            self.attacking &= 0xFF ^ (1 << caller)
+            self.releasing |= (1 << caller)
 
     def get_divisor(self, rate):
 
@@ -191,45 +198,40 @@ class ADSR:
         # TODO: linear interpolation between coarser table values
         # TODO: probably just a single return point so we can apply the depth scaling nicely
 
-        if self.sustaining:
-            return self.level  # TODO: accurately decay to sustain level so pitch mod is in-tune
+        if self.sustaining & (1 << caller):
+            return self.level[caller]  # TODO: accurately decay to sustain level so pitch mod is in-tune
 
         try:
             tdelta = ticks_diff(ticks_us(), self.gate_starts[caller])
         except KeyError:  # at the very start, we will be trying to update this having never gated it
             self.gate_starts[caller] = 0  # effectively some time arbitrarily far in the past
+            tdelta = ticks_diff(ticks_us(), 0)
 
-        try:
-            stat = self.gate_status[caller]
-        except KeyError:
-            self.gate_status[caller] = False  # as above
-            stat = False
-
-        if stat:
+        if self.gate_status & (1 << caller):
             # gate is true but we didn't reach the sustain level, must be attacking or decaying
-            if self.attacking:
-                index = tdelta // self.a_d + self.attack_fastforward
+            if self.attacking & (1 << caller):
+                index = tdelta // self.a_d + self.attack_fastforward[caller]
 
                 # we need to "fast-forward" thru the attack array if we are coming from some residual decay/release level
 
                 # print(ticks_us(), self.gate_starts[caller])
                 # print(self.a_d)
                 # print("atack and index is", index)
-                if index < self.array_length and self.level < 65535:
+                if index < self.array_length and self.level[caller] < 65535:
                     # within attack phase
                     lev = 65535 - self.arr[index]  # exponential INCREASE, so 1 minus
                     # add the level if we are re-initiating an attack during the decay phase
-                    self.level = lev
+                    self.level[caller] = lev
                     return min(lev, 65535)
                     # this is the only place we could go over 255 because of adding the previous level. Never want this.
                     # level >= 255 will be detected in the next "get" call and push us into the decay phase.
                 else:  # finished the attack array and now it is time to decay
-                    self.attacking = False
-                    self.decaying = True
+                    self.attacking &= 0xFF ^ (1 << caller)
+                    self.decaying |= (1 << caller)
                     self.gate_starts[caller] = ticks_us()  # reset time counter for decay curve now
                     lev = 65535 - self.arr[-1]
-                    self.level = lev
-                    self.releasing_from = lev  # record how high we got and use it to scale the decay phase
+                    self.level[caller] = lev
+                    self.releasing_from[caller] = lev  # record how high we got and use it to scale the decay phase
                     return lev
             else:
                 # we must be decaying, sustain was handled further up
@@ -238,30 +240,30 @@ class ADSR:
                     decay_point = self.arr[index]  # those arrays follow each other
                     # we need to vertically scale the decay to squash it into the space between max level and sustain level
                     # then add the "floor" of the sustain level
-                    scalerange = self.releasing_from - self._s
+                    scalerange = self.releasing_from[caller] - self._s
                     lev = self._s + fpmult(decay_point, scalerange)
                     # lev = self.level - fpmult(decay_point, (self.releasing_from << 1))
 
-                    self.level = lev
+                    self.level[caller] = lev
                     return lev
                 else:  # we reached the end of the decay table so now just hold at the sustain level
-                    self.decaying = False
-                    self.sustaining = True
-                    return self.level  # always need to return something so start sustaining
+                    self.decaying &= 0xFF ^ (1 << caller)
+                    self.sustaining &= 0xFF ^ (1 << caller)
+                    return self.level[caller]  # always need to return something so start sustaining
                     # note that we never actually reach the value specified by the sustain parameter because the expo function can never reach it
                     # we will always be just a little over, but this avoids a discontinuity when exiting the decay function
         else:  # release phase
-            if self.releasing:
+            if self.releasing & (1 << caller):
                 index = tdelta // self.r_d
                 if index < self.array_length:
                     release_point = self.arr[index]
-                    lev = fpmult(release_point,
-                                 self.releasing_from)  # need to vertically squash release values to decrease from the current level
+                    lev = fpmult(release_point, self.releasing_from[caller])
+                    # need to vertically squash release values to decrease from the current level
                     # releasing_from was set when the gate signal went False
-                    self.level = lev
+                    self.level[caller] = lev
                     return lev
                 else:
-                    self.releasing = False
+                    self.releasing &= 0xFF ^ (1 << caller)
                     return 0  # we ran past the end of the release table, envelope has completed.
             else:
                 return 0  # not sustaining, not gated, not releasing, nothing is happening
