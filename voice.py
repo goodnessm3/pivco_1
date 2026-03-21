@@ -21,7 +21,7 @@ class Voice:
             send_dac_value(3, 127)
             # regardless of what it was set to before, need ca. 50% duty cycle to get good measurements
 
-        self.osc = Oscillator(4, 5)  # we are manually specifying coarse and fine DAC index here
+        self.osc = Oscillator(addr, 4, 5)  # we are manually specifying coarse and fine DAC index here
         # eventually need to give voice an address as well for polyphonic
 
         # hacky way to specify values during empirical PID tuning

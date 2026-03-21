@@ -43,7 +43,7 @@ for k in voice_keys:
 
 class Controls:
 
-    def __init__(self, voice_list, lfo_list, adsr_list):
+    def __init__(self, voice_list, lfo_list, adsr_list, shutdown_handler):
 
         """Pass in lists of modulators which were instantiated in the main thread. We will just refer to these by number index 1..5"""
 
@@ -59,6 +59,7 @@ class Controls:
         # tuples of object, property and value
         # mainloop will do object.__setattr__(value)
         self.printable_names = self.make_printable_names()
+        self.shutdown_handler = shutdown_handler  # reference to the function to run if we want to turn off
 
     def make_printable_names(self):
 
@@ -84,6 +85,7 @@ class Controls:
         elif channel == 23:
             if value > 127:
                 print("tap button - use for graceful shutdown")  # TODO
+                self.shutdown_handler()  # run the shutdown function
             return
         elif channel == 19:  # envelope select
             self.selected_adsr = listindex(self.adsr_list, value)

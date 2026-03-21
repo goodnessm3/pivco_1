@@ -206,6 +206,7 @@ TARGET_WAVETIME_ARRAY = array("I", [0] * 8)
 CORRECTIONS_ARRAY = array("B", [0] * 16)
 MEASURED_ADDRESS = 0  # the address we are monitoring on the tune bus
 LATCH_PREPARED = False
+PIDLIST = [V.osc.pid, VV.osc.pid]
 
 def tune_loop(target_wavetime_array, corrections_array, get_frequency_func):
 
@@ -264,8 +265,8 @@ _thread.start_new_thread(tune_loop, (TARGET_WAVETIME_ARRAY, CORRECTIONS_ARRAY, g
 
 try:
     while 1:
-        print(TARGET_WAVETIME_ARRAY)
-        print("measured address ", MEASURED_ADDRESS)
+        #print(TARGET_WAVETIME_ARRAY)
+        #print("measured address ", MEASURED_ADDRESS)
         #print("top of main loop")
         #DAC_MANAGER.update()
         loopcount += 1
@@ -308,7 +309,7 @@ try:
                 #print("sent note on to voice ", VOICES[NEXT_VOICE])
 
 
-            else:  # TODO - just do it better OK
+            else:
                 addr = HELD_NOTES[note]
                 if addr == -1:
                     pass  # this note isn't actually being played, shouldn't be able to get here??

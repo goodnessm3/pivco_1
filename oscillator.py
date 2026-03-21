@@ -118,10 +118,12 @@ class Oscillator:
 
     offset = 33  # the lowest MIDI note we can get from the keyboard
 
-    def __init__(self, coarse_index=4, fine_index=5):
+    def __init__(self, addr, coarse_index=4, fine_index=5):
 
         self.c = coarse_index
         self.f = fine_index
+        self.addr = addr  # an oscillator will be associated with a certain voice and needs to keep track of
+        # its identity as tuning tables are unique
 
         self.coarse_array = array("I", [0] * 150)  # TODO - how long actually?
         self.fine_array = array("I", [0] * 150)
@@ -143,7 +145,7 @@ class Oscillator:
     def load_arrays(self):
 
         try:
-            with open("tuning", "rb") as f:
+            with open(f"tuning{self.addr}", "rb") as f:
                 cnt = 0
                 array_size = 150
                 dest = self.coarse_array
@@ -164,13 +166,13 @@ class Oscillator:
 
     def save_arrays(self):
 
-        with open("tuning", "wb") as f:
+        with open(f"tuning{self.addr}", "wb") as f:
             for q in self.coarse_array:
                 f.write(q.to_bytes(2, "big"))
             for q in self.fine_array:
                 f.write(q.to_bytes(2, "big"))
 
-        print("wrote tuning arrays")
+        print(f"wrote tuning arrays to tuning{self.addr}")
 
     def make_tuning_curve(self):
 
