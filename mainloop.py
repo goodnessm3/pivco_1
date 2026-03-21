@@ -1,8 +1,8 @@
 from pin_assignments import *
 from machine import Pin, I2C
 import time
-
-
+from sys import exit
+import _thread
 
 """
 TUNE_LATCH_PIN = Pin(P_TUNE_LATCH_PIN,Pin.OUT,value=1)
@@ -37,7 +37,7 @@ del TEST_CS_PIN
 from array import array
 from readmidi import MidiReader
 import math
-from freq_count_nodma import freq_counter_cleanup, freq_count_reset
+from freq_count_nodma import freq_counter_cleanup, freq_count_reset, get_frequency_ema
 from mydacs import send_dac_value, dac_setup, ADDRESS_MANAGER, prepare_tune_latch
 
 ADDRESS_MANAGER.put(0)  # !!!!!!!!!!! for testing new card!!!!
@@ -135,7 +135,7 @@ VOICES = [V, VV]  # in the future, there be more
 # voices must appear in this list in ascending address order for the address manager to work
 
 MR = MidiReader()
-CONTROLS = Controls(VOICES, LFOLIST, ADSRLIST)
+
 DM = DisplayManager(VOICES, LFOLIST, ADSRLIST)
 #DAC_MANAGER = DacManager(modulation_array, 1)  # todo: active voices should be a bitmask
 
@@ -149,7 +149,7 @@ HELD_NOTES = array("b", [-1] * 97)  # keep track of which voice is playing which
  # -1 means no voice is playing that note. Obviously can't use a default of 0 because that is a real address
 CURRENT_NOTES = array("B", [0] * 8)  # which note is played by which voice?
 
-
+RUNNING = False
 loopcount = 0
 loopstart = time.ticks_ms()
 
@@ -170,10 +170,103 @@ AVBL_VOICES.append(0)
 AVBL_VOICES.append(1)  # TODO - decent start but need better voice assignment algorithm that picks an unused voice
 #print("deque ", list(AVBL_VOICES))
 
+def shut_down():
+
+    global RUNNING
+
+    RUNNING = False
+
+    print("Shutting down...")
+    print("count", loopcount)
+    total_time = time.ticks_diff(time.ticks_ms(), loopstart)
+
+    lps = loopcount / total_time * 1000
+    print(f"Averaged {lps} loops per second over {total_time} ms.")
+    freq_counter_cleanup()
+    send_dac_value(5, 0)  # manually turn off single voice's VCA
+    print("cleaned up freq counter and muted VCA, starting file saving")
+    try:  # in testing with Thonny, sometimes we will get a second keyboard interrupt during the file writing
+        # seems intermittent, at least we can detect when it happens.
+        settings_manager.save_object_settings(VOICES, ADSRLIST, LFOLIST)
+
+        for q in VOICES:
+            q.osc.save_arrays()
+    except KeyboardInterrupt:
+        print("saving recieved another interrupt and may have failed")
+    print("bottom of finally block")
+    print("Shutdown function finished")
+    exit()
+
+
+CONTROLS = Controls(VOICES, LFOLIST, ADSRLIST, shut_down)  # needs to be instantiated after shutdown func defined
+
+# arrays for the PID tuning core to read targets and apply corrections
+TARGET_WAVETIME_ARRAY = array("I", [0] * 8)
+# 0 = coarse, 1 = fine, 2 = coarse, 3 = fine etc
+CORRECTIONS_ARRAY = array("B", [0] * 16)
+MEASURED_ADDRESS = 0  # the address we are monitoring on the tune bus
+LATCH_PREPARED = False
+
+def tune_loop(target_wavetime_array, corrections_array, get_frequency_func):
+
+    global RUNNING
+    global MEASURED_ADDRESS
+    global TARGET_WAVETIME_ARRAY
+    global LATCH_PREPARED
+
+    fast_counter = 0
+    fast_start_time = time.ticks_ms()
+    target_wavetime_array = target_wavetime_array
+    corrections_array = corrections_array
+    get_frequency_ema = get_frequency_func
+
+    print("Tuning loop started on separate core.")
+    cnt = 0
+    while 1:
+        if RUNNING:
+            freq, stale = get_frequency_ema()
+            #freq, stale = (1234, False)
+            # waiting loops - for new audio sample or for address to change
+            while stale:
+                freq, stale = get_frequency_ema()  # poll until we measured a new wave cycle and updated the measurement
+            while not LATCH_PREPARED:
+                time.sleep(0.01)
+                pass  # we asked to measure a different voice, need to wait for the main loop to reach the update part
+
+            TARGET_WAVETIME_ARRAY[MEASURED_ADDRESS] = freq
+
+            fast_counter += 1
+
+            cnt += 1
+            if cnt > 300:  # 1000 measurements, increment voice we are measuring
+                MEASURED_ADDRESS += 1
+                if MEASURED_ADDRESS > 1:
+                    MEASURED_ADDRESS = 0
+                MEASURED_UPDATED = False  # wait for the latch to actually be switched
+                LATCH_PREPARED = False
+                cnt = 0
+
+        else:
+            break
+
+    print("Tuning loop exited via running flag")
+    end_time = time.ticks_ms()
+    delta = time.ticks_diff(end_time, fast_start_time)
+    rate = fast_counter/delta * 1000
+    print(f"fast loop: {fast_counter} cycles in {delta} ms: {rate} per second.")
+    print("-------> second core exited cleanly")
+    #finally:
+        #print("Exited DAC loop via keyboard interrupt")
+
+RUNNING = True
+_thread.start_new_thread(tune_loop, (TARGET_WAVETIME_ARRAY, CORRECTIONS_ARRAY, get_frequency_ema))
+
 
 try:
     while 1:
-
+        print(TARGET_WAVETIME_ARRAY)
+        print("measured address ", MEASURED_ADDRESS)
+        #print("top of main loop")
         #DAC_MANAGER.update()
         loopcount += 1
         DISPLAY.draw_screen()
@@ -230,6 +323,11 @@ try:
 
         for i in range(VOICE_COUNT):
             #print("address update ", i)
+            if i == MEASURED_ADDRESS:
+                if not LATCH_PREPARED:
+                    prepare_tune_latch()  # switch to measuring this voice on the next CS toggle
+                    LATCH_PREPARED = True  # need this to only fire once, otherwise we'll fill up the FIFO of the
+                    # latch manager and it will block
             ADDRESS_MANAGER.put(i)
             VOICES[i].update()
             # todo - need to update when decaying, but want to avoid when absolutely nothing happening
@@ -238,24 +336,7 @@ try:
 
 
 finally:
-    print("count", loopcount)
-    total_time = time.ticks_diff(time.ticks_ms(), loopstart)
-
-    lps = loopcount / total_time * 1000
-    print(f"Averaged {lps} loops per second over {total_time} ms.")
-    freq_counter_cleanup()
-    send_dac_value(5, 0)  # manually turn off single voice's VCA
-    print("cleaned up freq counter and muted VCA, starting file saving")
-    try:  # in testing with Thonny, sometimes we will get a second keyboard interrupt during the file writing
-        # seems intermittent, at least we can detect when it happens.
-        settings_manager.save_object_settings(VOICES, ADSRLIST, LFOLIST)
-
-
-        for q in VOICES:
-            q.osc.save_arrays()
-    except KeyboardInterrupt:
-        print("saving recieved another interrupt and may have failed")
-    print("bottom of finally block")
+    shut_down()
 
 
         

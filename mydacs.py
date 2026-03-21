@@ -198,3 +198,4 @@ def prepare_tune_latch():
     # the next time chip select is lowered, tune latch signal will be sent to all the voices
     # so the voice we are addressing stores the tune bit, and everything else stores nothing because not selected
     TUNE_LATCH_MANAGER.put(1)  # just putting something in the FIFO causes the pio program to advance
+    print("length of latch manager fifo is ", TUNE_LATCH_MANAGER.tx_fifo())

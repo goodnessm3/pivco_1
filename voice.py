@@ -126,6 +126,8 @@ class Voice:
             # coarse_correction, fine_corrected = self.osc.correct()  # TODO - correction function changed
             # print("freq corrections coarse and fine were: ", coarse_correction, fine_corrected)
 
+        any_update_sent = False
+
         for idx, ls in enumerate(self.modulation_assignments):
             modulation_sum = 0  # TODO: what if we want to multiply modulations, not add?
             for entity in ls:
@@ -159,7 +161,17 @@ class Voice:
                 # print("sending", modulation_sum, "to", idx)
                 send_dac_value(idx, modulation_sum)
                 self.last_sent[idx] = modulation_sum
+                any_update_sent = True
 
+            last_idx = idx
+            last_modsum = modulation_sum
+
+        if not any_update_sent:
+            # it may be that no changes were sent. But we still need to cause the CS pin to toggle in case the
+            # tuning core is trying to change the measured address. So just redundantly send a value
+            send_dac_value(last_idx, last_modsum)
+            # TODO - can we be more clever and force the state machine to jump such that it only toggles CS
+            # and writes no data?
 
             #self.modulation_array[self.offset + idx] = modulation_sum
             # write out the modulation to be picked up and sent out by the SPI transmission code
