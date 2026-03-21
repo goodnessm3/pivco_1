@@ -143,9 +143,10 @@ print("Loading saved settings...")
 settings_manager.load_object_settings(VOICES, ADSRLIST, LFOLIST)
 print("Done")
 
-HELD_NOTES = array("B", [0] * 97)  # keep track of which voice is playing which note
+HELD_NOTES = array("b", [-1] * 97)  # keep track of which voice is playing which note
  # so we can send key-up signals to them
  # index = midi note, value = the voice that is playing the note
+ # -1 means no voice is playing that note. Obviously can't use a default of 0 because that is a real address
 CURRENT_NOTES = array("B", [0] * 8)  # which note is played by which voice?
 
 
@@ -160,11 +161,15 @@ loopstart = time.ticks_ms()
 VOICE_COUNT = 2
 
 from collections import deque
-VOICE_USE = deque([], 8)
-
+#VOICE_USE = deque([], 8)  # voices that are currently in use
+AVBL_VOICES = deque([], 8)  # voices that are not gating, but still might be decaying after note off. Prefer using
+# one of these rather than stealing an active voice, and if we do take from this deque, take the oldest entry which
+# will be the most decayed
 # arbitrarily order the voices into the deque so they all appear once
-VOICE_USE.append(0)
-VOICE_USE.append(1)  # TODO - decent start but need better voice assignment algorithm that picks an unused voice
+AVBL_VOICES.append(0)
+AVBL_VOICES.append(1)  # TODO - decent start but need better voice assignment algorithm that picks an unused voice
+#print("deque ", list(AVBL_VOICES))
+
 
 try:
     while 1:
@@ -196,60 +201,32 @@ try:
                 DISPLAY.update(pair)  # send the new frame buffer for display next loop
         
         for status, note in notes_queue:  # tuples of freq, true/false
+
             if status:  # True, want to play a new note
-                NEXT_VOICE = VOICE_USE.popleft()
+                try:
+                    NEXT_VOICE = AVBL_VOICES.popleft()
+                except IndexError as e:
+                    print("no free voice available")
+                    continue
                 VOICES[NEXT_VOICE].send(True, note)
                 HELD_NOTES[note] = NEXT_VOICE  # store the address so we can "un-play" this note on key up
                 CURRENT_NOTES[NEXT_VOICE] = note
-                VOICE_USE.append(NEXT_VOICE)  # so we can keep a record of which key was least recently pressed
-                print("sent note on to voice ", VOICES[NEXT_VOICE])
-                print("deque ", VOICE_USE)
+                #VOICE_USE.append(NEXT_VOICE)  # so we can keep a record of which key was least recently pressed
+                #print("sent note on to voice ", VOICES[NEXT_VOICE])
+
 
             else:  # TODO - just do it better OK
                 addr = HELD_NOTES[note]
+                if addr == -1:
+                    pass  # this note isn't actually being played, shouldn't be able to get here??
                 if CURRENT_NOTES[addr] == note:
                     VOICES[addr].send(False)  # only need to do this if the voice didn't get stolen in the meantime
                     # we don't want to prematurely terminate the stolen note.
-                HELD_NOTES[note] = 0
-                print("Send note off to voice ", addr)
-
-            #NEXT_VOICE += 1  # todo - what if one note held and others come on and off, need to be cleverer
-
-            #if NEXT_VOICE >= VOICE_COUNT:
-                #NEXT_VOICE = 0  # wrap and start re-using voices if all are occupied
+                    HELD_NOTES[note] = 0
+                    #print("Send note off to voice ", addr)
+                    AVBL_VOICES.append(addr)  # mark as available for a new note
 
 
-                """
-                for v in VOICES:  # find the first available voice
-                    v.send(False)  # terminate current note
-                    down_notes = {}  # can't decay when only 1 voice
-                    # this is TESTING code for single voice case and played note prio.
-                    v.send(True, note)
-                """
-
-
-                    #!!!!!!!!!!!!!!!!!!!!!!!
-                    #v.monitoring = True  # TODO - track which notes are monitored
-                    #!!!!!!!!!!!!!!!!!!!!!!!
-
-
-
-                    #print(f"Assigned note {note} to {v}")
-                    #down_notes[note] = v  # keep a reference so we can unplay note
-
-                    # !!!!!!!!!!!!!! remove break to play both at once
-
-
-
-            """        
-            else:  # False, meaning note up
-                voice = down_notes.get(note, None)
-                # there might be a note up signal for an uplayed note
-                # if we ran out of voices to allocate, so just skip it.
-                if voice:
-                    voice.send(False)  # free up voice
-                    #print(f"freeing voice {voice}")
-            """
 
         for i in range(VOICE_COUNT):
             #print("address update ", i)
