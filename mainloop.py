@@ -1,9 +1,10 @@
+from pidcontroller import PidController
 from pin_assignments import *
 from machine import Pin, I2C
 import time
 from sys import exit
 import _thread
-
+from fastlog2 import fast_log2
 """
 TUNE_LATCH_PIN = Pin(P_TUNE_LATCH_PIN,Pin.OUT,value=1)
 while 1:
@@ -39,6 +40,8 @@ from readmidi import MidiReader
 import math
 from freq_count_nodma import freq_counter_cleanup, freq_count_reset, get_frequency_ema
 from mydacs import send_dac_value, dac_setup, ADDRESS_MANAGER, prepare_tune_latch
+from wavecount_table import NOTE_WAVECOUNTS  # use this to give the tuning PIDs a target
+# this table actually contains the log2s of the wave counts
 
 ADDRESS_MANAGER.put(0)  # !!!!!!!!!!! for testing new card!!!!
 prepare_tune_latch()  # just latch something to start off with
@@ -201,31 +204,38 @@ def shut_down():
 CONTROLS = Controls(VOICES, LFOLIST, ADSRLIST, shut_down)  # needs to be instantiated after shutdown func defined
 
 # arrays for the PID tuning core to read targets and apply corrections
-TARGET_WAVETIME_ARRAY = array("I", [0] * 8)
+#TARGET_WAVETIME_ARRAY = array("I", [0] * 8)  # this is written to by the main loop
+# don't need - specify PID setpoints directly
 # 0 = coarse, 1 = fine, 2 = coarse, 3 = fine etc
 CORRECTIONS_ARRAY = array("B", [0] * 16)
 MEASURED_ADDRESS = 0  # the address we are monitoring on the tune bus
 LATCH_PREPARED = False
-PIDLIST = [V.osc.pid, VV.osc.pid]
+PIDLIST = [PidController(400, 24, 4096), PidController(6000, 36, 4096)]
+COARSELIST = [V.osc.coarse_array, VV.osc.coarse_array]
+FINELIST = [V.osc.fine_array, VV.osc.fine_array]
+# TODO: magic numbers!!!!!!!!!! Centralize PID settings
 
-def tune_loop(target_wavetime_array, corrections_array, get_frequency_func):
+def tune_loop(corrections_array, get_frequency_func):
 
     global RUNNING
     global MEASURED_ADDRESS
     global TARGET_WAVETIME_ARRAY
     global LATCH_PREPARED
+    global COARSELIST
+    global FINELIST
+    global PIDLIST
 
     fast_counter = 0
     fast_start_time = time.ticks_ms()
-    target_wavetime_array = target_wavetime_array
     corrections_array = corrections_array
-    get_frequency_ema = get_frequency_func
+    get_frequency_ema = get_frequency_func  # really not sure if we needed to pass it in like this but got name errors
 
     print("Tuning loop started on separate core.")
     cnt = 0
+    coarse_jump = 0  # only change coarse increment if we tried to send multiple out-of-range fine signals
     while 1:
         if RUNNING:
-            freq, stale = get_frequency_ema()
+            freq, stale = get_frequency_ema(min_samples=8)
             #freq, stale = (1234, False)
             # waiting loops - for new audio sample or for address to change
             while stale:
@@ -234,18 +244,38 @@ def tune_loop(target_wavetime_array, corrections_array, get_frequency_func):
                 time.sleep(0.01)
                 pass  # we asked to measure a different voice, need to wait for the main loop to reach the update part
 
-            TARGET_WAVETIME_ARRAY[MEASURED_ADDRESS] = freq
+            pid = PIDLIST[MEASURED_ADDRESS]
+            logfreq = fast_log2(freq)
+            corxn = pid.get_correction(logfreq)
+            note = CURRENT_NOTES[MEASURED_ADDRESS]  # find out what the measured voice is supposed to be playing
+            FINELIST[MEASURED_ADDRESS][note] = corxn  # correct that voice's tuning table
+
+            if corxn > 255:
+                coarse_jump += 1
+                if coarse_jump > 6:
+                    COARSELIST[MEASURED_ADDRESS][note] += 1
+                    coarse_jump = 0
+                    pid.reset()
+            elif corxn < 0:
+                coarse_jump += 1
+                if coarse_jump > 6:
+                    COARSELIST[MEASURED_ADDRESS][note] -= 1
+                    coarse_jump = 0
+                    pid.reset()
+
+            print(f"{corxn}\t{PIDLIST[MEASURED_ADDRESS].setpoint}\t{logfreq}")
 
             fast_counter += 1
 
+            """
             cnt += 1
             if cnt > 300:  # 1000 measurements, increment voice we are measuring
                 MEASURED_ADDRESS += 1
                 if MEASURED_ADDRESS > 1:
                     MEASURED_ADDRESS = 0
-                MEASURED_UPDATED = False  # wait for the latch to actually be switched
                 LATCH_PREPARED = False
                 cnt = 0
+            """
 
         else:
             break
@@ -260,7 +290,7 @@ def tune_loop(target_wavetime_array, corrections_array, get_frequency_func):
         #print("Exited DAC loop via keyboard interrupt")
 
 RUNNING = True
-_thread.start_new_thread(tune_loop, (TARGET_WAVETIME_ARRAY, CORRECTIONS_ARRAY, get_frequency_ema))
+_thread.start_new_thread(tune_loop, (CORRECTIONS_ARRAY, get_frequency_ema))
 
 
 try:
@@ -271,7 +301,7 @@ try:
         #DAC_MANAGER.update()
         loopcount += 1
         DISPLAY.draw_screen()
-        MR.read()  # induce the MidiReader to compile messages to read out         
+        MR.read()  # induce the MidiReader to compile messages to read out
         notes_queue = MR.get_messages("notes")
         controls_queue = MR.get_messages("controls")
 
@@ -293,7 +323,7 @@ try:
                     setattr(ob, parm, value)  # but this!!
                 pair = DM.update(ret[0])  # get a new frame buffer for the LCD
                 DISPLAY.update(pair)  # send the new frame buffer for display next loop
-        
+
         for status, note in notes_queue:  # tuples of freq, true/false
 
             if status:  # True, want to play a new note
@@ -305,8 +335,9 @@ try:
                 VOICES[NEXT_VOICE].send(True, note)
                 HELD_NOTES[note] = NEXT_VOICE  # store the address so we can "un-play" this note on key up
                 CURRENT_NOTES[NEXT_VOICE] = note
-                #VOICE_USE.append(NEXT_VOICE)  # so we can keep a record of which key was least recently pressed
-                #print("sent note on to voice ", VOICES[NEXT_VOICE])
+                pid = PIDLIST[NEXT_VOICE]
+                pid.setpoint = NOTE_WAVECOUNTS[note]
+                pid.reset()
 
 
             else:
@@ -335,6 +366,8 @@ try:
         #for q in VOICES:
             #q.update()
 
+except Exception as e:
+    print(e)
 
 finally:
     shut_down()

@@ -7,11 +7,14 @@ import time
 from math import log2, floor
 from fastlog2 import fast_log2
 
+from wavecount_table import NOTE_WAVECOUNTS, NOTES
+
 SM_FREQ = 6_000_000
 
 # lowest note on keyboard = 36
 # highest note = 96
 
+"""  # MOVED to its own module so it can be used elsewhere
 A1 = 55.00
 NOTES = [0.0] * 33  # unused very low notes
 NOTE_WAVECOUNTS = array("I", [0] * 133)
@@ -26,93 +29,10 @@ for x in range(97):
     # so about 54000 for the lowest note, and 180 for the highest - the PIO frequency is chosen so that we use
     # most of the range of a 16-bit counter across the entire range of notes
     # this wavecounts table is used to define the set point of the autotuning PID.
+"""
 
+from pidcontroller import PidController
 
-class PidController:
-
-    def __init__(self, p=512, i=320, d=20, setpoint=0):
-
-        self.accumulated_error = 0
-        # p, i, d in the range of 0..4096 and determined experimentally, maybe one day we can have a
-        # "PID tuning mode" that lets the user tweak the values
-        self.p = p
-        self.d = d
-        self.i = i
-        self.setpoint = setpoint
-        self.instantaneous_error = 0  # for diagnostic purposes
-        self.last_called = time.ticks_us()  # the microsecond timestamp when we last asked for a correction
-        self.last_error = 0
-
-    def reset(self):
-
-        self.accumulated_error = 0
-        self.instantaneous_error = 0
-        self.last_called = time.ticks_us()
-
-    def get_correction(self, process_variable):
-
-        delta = process_variable - self.setpoint
-        time_step = time.ticks_diff(time.ticks_us(), self.last_called)
-
-        slope = ((delta - self.last_error) << 16) // time_step  # for calculating d-term
-        # bit shift by 16 because the error needs to be much bigger than the time step
-        self.last_error = delta
-        self.accumulated_error += delta * time_step
-        self.instantaneous_error = delta
-
-        # print("delta: ", delta)
-
-        pterm = (delta * self.p >> 14)
-        dterm = (slope * self.d >> 26)
-        iterm = (self.accumulated_error * self.i >> 26)
-
-        # correction = (delta >> self.p) + (self.accumulated_error >> self.i) - (delta >> self.d)
-        correction = pterm - dterm + iterm
-        # print("P-term: ", pterm)
-        # print("I-term: ", iterm)
-        # print("D-term: ", dterm)
-        # print("correction: ", correction)
-        # print("---")
-
-        return correction
-
-    def get_error(self):
-        return self.instantaneous_error
-
-class PidController_old:
-
-    # TODO - the PID has no concept of time! So the I term needed will vary depending on how often this is called!
-
-    def __init__(self):
-        self.accumulated_error = 0
-        self.p = 2  # note these are bit shifts, so 3 means divide by 8
-        self.d = 3
-        self.i = 4
-        self.instantaneous_error = 0
-
-    def reset(self):
-        self.accumulated_error = 0
-        self.instantaneous_error = 0
-
-    def get_correction(self, note):
-        # print("accu error: ", self.accumulated_error)
-        hi, lo, count = get_sample_reject_anomalies(min_samples=3)  # returns 2 wave cycles and how many measuemntes
-        measured = (hi + lo) // count
-        desired = NOTE_WAVECOUNTS[note]
-        delta = desired - measured
-        self.accumulated_error += delta
-        self.instantaneous_error = delta
-
-        correction = (delta >> self.p) + (self.accumulated_error >> self.i) - (delta >> self.d)
-        # print("P",delta >> self.p)
-        # print("D",delta >> self.d)
-        # print("I",self.accumulated_error >> self.i)
-        # print(f"Measured: {measured} desired: {desired} delta: {delta} correxion: {correction}")
-
-        return correction  # so hard to keep track of signs
-
-    def get_error(self):
-        return self.instantaneous_error
 
 class Oscillator:
 
@@ -129,7 +49,8 @@ class Oscillator:
         self.fine_array = array("I", [0] * 150)
 
         self.fitter = Fitter()  # mathematical tuning curve before PID fine-tuning
-        self.pid = PidController()
+        self.pid = PidController(6000, 36, 4096)  # todo - eventually this will be fully decoupled from the oscillator class
+        # and managed by the autotuning core instead
 
         self.target_note = 0  # the number of the MIDI note we have been asked to play. Need to store this to
         # get continuous corrections
@@ -194,6 +115,10 @@ class Oscillator:
         print("fitted initial line")
 
     def note_to_dac_signals(self, note):
+
+        """only for use in building the initial array, slow!!!"""
+
+        # TODO - just do away with this and use our fast log2 approx instead
 
         want = NOTES[note]
         dacsignal = self.fitter.getx(log2(want))

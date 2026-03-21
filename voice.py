@@ -73,6 +73,8 @@ class Voice:
 
         # current statuses
         self.note_down = False
+        self.midinote = None  # what note are we supposed to be playing? Continually look up DAC signals from the tuning
+        # array, which is being updated by the autotuning core
         self.cutoff_freq_tracking = cutoff_freq_tracking  # TODO: configurable later
 
         self.modulation_assignments = mods  # a list where the index is the DAC channel and the list entry is
@@ -100,6 +102,7 @@ class Voice:
             self.note_down = True
 
             if midinote:
+                self.midinote = midinote
                 self.coarse, self.fine = self.osc.play_note(midinote)
                 if self.cutoff_freq_tracking:
                     self.filter_track = FILTER_CVS[midinote]
@@ -120,7 +123,13 @@ class Voice:
     def update(self):
 
         # TODO: don't bother get'ing from a mod source that isn't in use
-        coarse_correction = fine_corrected = 0
+
+        if self.midinote:  # prevent crash before any note is played
+            self.coarse = self.osc.coarse_array[self.midinote]
+            self.fine = self.osc.fine_array[self.midinote]
+        # now that these are set here, they will automatically be sent out to the DACs in the update loop
+        # but this could be done a LOT better
+
         if self.monitoring:
             pass
             # coarse_correction, fine_corrected = self.osc.correct()  # TODO - correction function changed
@@ -139,10 +148,6 @@ class Voice:
             base_variable = self.variable_names[idx]  # so we can refer by name
 
             # overwrite coarse and fine if they need correction
-            if base_variable == "coarse" and coarse_correction != 0:
-                self.coarse += coarse_correction
-            elif base_variable == "fine" and fine_corrected != 0:
-                self.fine = fine_corrected
 
             # print(f"for {base_variable}, modsum = {modulation_sum}")
 
