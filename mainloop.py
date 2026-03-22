@@ -210,7 +210,7 @@ CONTROLS = Controls(VOICES, LFOLIST, ADSRLIST, shut_down)  # needs to be instant
 CORRECTIONS_ARRAY = array("B", [0] * 16)
 MEASURED_ADDRESS = 0  # the address we are monitoring on the tune bus
 LATCH_PREPARED = False
-PIDLIST = [PidController(400, 24, 4096), PidController(6000, 36, 4096)]
+PIDLIST = [PidController(1000, 44, 4096), PidController(6000, 36, 4096)]
 COARSELIST = [V.osc.coarse_array, VV.osc.coarse_array]
 FINELIST = [V.osc.fine_array, VV.osc.fine_array]
 # TODO: magic numbers!!!!!!!!!! Centralize PID settings
@@ -255,13 +255,13 @@ def tune_loop(corrections_array, get_frequency_func):
                 if coarse_jump > 6:
                     COARSELIST[MEASURED_ADDRESS][note] += 1
                     coarse_jump = 0
-                    pid.reset()
+                    #pid.reset()
             elif corxn < 0:
                 coarse_jump += 1
                 if coarse_jump > 6:
                     COARSELIST[MEASURED_ADDRESS][note] -= 1
                     coarse_jump = 0
-                    pid.reset()
+                    #pid.reset()
 
             print(f"{corxn}\t{PIDLIST[MEASURED_ADDRESS].setpoint}\t{logfreq}")
 

@@ -23,8 +23,13 @@ class PidController:
 
     def get_correction(self, process_variable):
 
+        #  TODO - derivative term based on change in PV not ERROR 21/03
+
+        tnow = time.ticks_us()
+
         delta = process_variable - self.setpoint
-        time_step = time.ticks_diff(time.ticks_us(), self.last_called)
+        time_step = time.ticks_diff(tnow, self.last_called)
+        self.last_called = tnow
 
         slope = ((delta - self.last_error) << 16) // time_step  # for calculating d-term
         # bit shift by 16 because the error needs to be much bigger than the time step
