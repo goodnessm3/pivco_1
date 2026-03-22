@@ -38,7 +38,7 @@ del TEST_CS_PIN
 from array import array
 from readmidi import MidiReader
 import math
-from freq_count_nodma import freq_counter_cleanup, freq_count_reset, get_frequency_ema
+from freq_count_nodma import freq_counter_cleanup, freq_count_reset, get_frequency_ema, reset_ema
 from mydacs import send_dac_value, dac_setup, ADDRESS_MANAGER, prepare_tune_latch
 from wavecount_table import NOTE_WAVECOUNTS  # use this to give the tuning PIDs a target
 # this table actually contains the log2s of the wave counts
@@ -129,12 +129,12 @@ tempmodlist = [
 ADDRESS_MANAGER.put(0)
 V = Voice(0, tempmodlist, modulation_array_reference=modulation_array, retune=False)
 prepare_tune_latch()
-ADDRESS_MANAGER.put(1)
-VV = Voice(1, tempmodlist, modulation_array_reference=modulation_array, retune=False)
+#ADDRESS_MANAGER.put(1)
+#VV = Voice(1, tempmodlist, modulation_array_reference=modulation_array, retune=False)
 #!!! ADDR!!!
 V.monitoring = False  # TODO: handle monitoring of multiple voices
-VV.monitoring = False
-VOICES = [V, VV]  # in the future, there be more
+#VV.monitoring = False
+VOICES = [V]  # in the future, there be more
 # voices must appear in this list in ascending address order for the address manager to work
 
 MR = MidiReader()
@@ -161,7 +161,7 @@ loopstart = time.ticks_ms()
 
 #NEXT_VOICE = 0  # the address of where we will send the newest note. Increments and loops around.
 #VOICE_COUNT = len(VOICES)
-VOICE_COUNT = 2
+VOICE_COUNT = 1########
 
 from collections import deque
 #VOICE_USE = deque([], 8)  # voices that are currently in use
@@ -170,7 +170,7 @@ AVBL_VOICES = deque([], 8)  # voices that are not gating, but still might be dec
 # will be the most decayed
 # arbitrarily order the voices into the deque so they all appear once
 AVBL_VOICES.append(0)
-AVBL_VOICES.append(1)  # TODO - decent start but need better voice assignment algorithm that picks an unused voice
+#######AVBL_VOICES.append(1)  # TODO - decent start but need better voice assignment algorithm that picks an unused voice
 #print("deque ", list(AVBL_VOICES))
 
 def shut_down():
@@ -210,12 +210,12 @@ CONTROLS = Controls(VOICES, LFOLIST, ADSRLIST, shut_down)  # needs to be instant
 CORRECTIONS_ARRAY = array("B", [0] * 16)
 MEASURED_ADDRESS = 0  # the address we are monitoring on the tune bus
 LATCH_PREPARED = False
-PIDLIST = [PidController(1000, 44, 4096), PidController(6000, 36, 4096)]
-COARSELIST = [V.osc.coarse_array, VV.osc.coarse_array]
-FINELIST = [V.osc.fine_array, VV.osc.fine_array]
+PIDLIST = [PidController(4000, 186, 2000), PidController(6000, 36, 4096)]
+COARSELIST = [V.osc.coarse_array, ]######VV.osc.coarse_array
+FINELIST = [V.osc.fine_array, ]######VV.osc.fine_array
 # TODO: magic numbers!!!!!!!!!! Centralize PID settings
 
-def tune_loop(corrections_array, get_frequency_func):
+def tune_loop(corrections_array, get_frequency_func, reset_ema_func):
 
     global RUNNING
     global MEASURED_ADDRESS
@@ -229,13 +229,18 @@ def tune_loop(corrections_array, get_frequency_func):
     fast_start_time = time.ticks_ms()
     corrections_array = corrections_array
     get_frequency_ema = get_frequency_func  # really not sure if we needed to pass it in like this but got name errors
+    reset_ema = reset_ema_func
 
     print("Tuning loop started on separate core.")
     cnt = 0
     coarse_jump = 0  # only change coarse increment if we tried to send multiple out-of-range fine signals
+    prev_note = 0  # if the setpoint changed, we want to reset the frequency measurer otherwise our correction
+    # will be based on old frequency samples
+    cycles_since_change = 0
+
     while 1:
         if RUNNING:
-            freq, stale = get_frequency_ema(min_samples=8)
+            freq, stale = get_frequency_ema(min_samples=6)
             #freq, stale = (1234, False)
             # waiting loops - for new audio sample or for address to change
             while stale:
@@ -246,26 +251,44 @@ def tune_loop(corrections_array, get_frequency_func):
 
             pid = PIDLIST[MEASURED_ADDRESS]
             logfreq = fast_log2(freq)
-            corxn = pid.get_correction(logfreq)
-            note = CURRENT_NOTES[MEASURED_ADDRESS]  # find out what the measured voice is supposed to be playing
-            FINELIST[MEASURED_ADDRESS][note] = corxn  # correct that voice's tuning table
 
-            if corxn > 255:
+            note = CURRENT_NOTES[MEASURED_ADDRESS]  # find out what the measured voice is supposed to be playing
+
+            if not note == prev_note:  # bail early because the target note has changed and our correction is outdated
+                cycles_since_change = 0
+                prev_note = note
+                target_wavecount = NOTE_WAVECOUNTS[note]
+                # avoids big jumps in PID output
+                time.sleep(0.05)  # wait for everything to stabilize for a bit before resuming corrections
+                reset_ema(target_wavecount)  # start EMA off with a dummy value that is what we want to measure
+                freq_count_reset()
+                pid.setpoint = NOTE_WAVECOUNTS[note]
+                pid.reset(note)  # passing a note to this method recalls the previous accumulated error for that note
+                time.sleep(0.05)
+                continue
+
+            corxn = pid.get_correction(logfreq)
+            FINELIST[MEASURED_ADDRESS][note] = corxn + 127  # correct that voice's tuning table
+            # !?!?!?!?!??! offset!?!??!
+
+
+            if corxn > 255 and cycles_since_change > 20:  # only permit coarse changes after some considerable time
                 coarse_jump += 1
-                if coarse_jump > 6:
+                if coarse_jump > 3:
                     COARSELIST[MEASURED_ADDRESS][note] += 1
                     coarse_jump = 0
-                    #pid.reset()
-            elif corxn < 0:
+                    pid.reset()
+            elif corxn < 0 and cycles_since_change > 20:
                 coarse_jump += 1
-                if coarse_jump > 6:
+                if coarse_jump > 3:
                     COARSELIST[MEASURED_ADDRESS][note] -= 1
                     coarse_jump = 0
-                    #pid.reset()
+                    pid.reset()
 
             print(f"{corxn}\t{PIDLIST[MEASURED_ADDRESS].setpoint}\t{logfreq}")
 
             fast_counter += 1
+            cycles_since_change += 1
 
             """
             cnt += 1
@@ -290,7 +313,7 @@ def tune_loop(corrections_array, get_frequency_func):
         #print("Exited DAC loop via keyboard interrupt")
 
 RUNNING = True
-_thread.start_new_thread(tune_loop, (CORRECTIONS_ARRAY, get_frequency_ema))
+_thread.start_new_thread(tune_loop, (CORRECTIONS_ARRAY, get_frequency_ema, reset_ema))
 
 
 try:
@@ -330,14 +353,13 @@ try:
                 try:
                     NEXT_VOICE = AVBL_VOICES.popleft()
                 except IndexError as e:
-                    print("no free voice available")
+                    #print("no free voice available")
                     continue
                 VOICES[NEXT_VOICE].send(True, note)
                 HELD_NOTES[note] = NEXT_VOICE  # store the address so we can "un-play" this note on key up
                 CURRENT_NOTES[NEXT_VOICE] = note
                 pid = PIDLIST[NEXT_VOICE]
-                pid.setpoint = NOTE_WAVECOUNTS[note]
-                pid.reset()
+
 
 
             else:

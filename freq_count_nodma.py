@@ -17,6 +17,7 @@ MAXX = 2**16-1
 EMA = 0  # module-level exponential moving average value
 DUTY_CYCLE = 0  # exponential moving average of wave duty cycle to make PWM setting more accurate  # TODO
 ALPHA = 2048  # parameter that determines the smoothness of the ema: lower = smoother but more laggy
+# changed 11:35
 
 # CHANGED 22:12 - in_ instead of mov to isr  was mov(isr, x)
 # also fixed MAXXX to have -1
@@ -144,7 +145,7 @@ def get_frequency(clk_freq=SM_FREQ):
         total += hi + lo
     return clk_freq * len(smp) / total / 2
 
-def reset_ema(val):
+def reset_ema(val=0):
 
     """When we change the note, don't want to wait for the ema to catch up, no matter how fast it is. Instead,
     start off with a dummy value which is exactly what we wanted."""

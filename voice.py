@@ -104,6 +104,9 @@ class Voice:
             if midinote:
                 self.midinote = midinote
                 self.coarse, self.fine = self.osc.play_note(midinote)
+
+                #print(f"Voice recvd note {midinote}. Coarse: {self.coarse} Fine: {self.fine}")
+
                 if self.cutoff_freq_tracking:
                     self.filter_track = FILTER_CVS[midinote]
                 for envelope in self.adsrs:
