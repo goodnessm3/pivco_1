@@ -82,11 +82,6 @@ active_voices = 0  # bitmask
 
 
 
-
-
-
-
-
 # setting up tuning line
 
 
@@ -129,12 +124,10 @@ tempmodlist = [
 ADDRESS_MANAGER.put(0)
 V = Voice(0, tempmodlist, modulation_array_reference=modulation_array, retune=False)
 prepare_tune_latch()
-#ADDRESS_MANAGER.put(1)
-#VV = Voice(1, tempmodlist, modulation_array_reference=modulation_array, retune=False)
-#!!! ADDR!!!
-V.monitoring = False  # TODO: handle monitoring of multiple voices
-#VV.monitoring = False
-VOICES = [V]  # in the future, there be more
+ADDRESS_MANAGER.put(1)
+VV = Voice(1, tempmodlist, modulation_array_reference=modulation_array, retune=False)
+
+VOICES = [V, VV]  # in the future, there be more
 # voices must appear in this list in ascending address order for the address manager to work
 
 MR = MidiReader()
@@ -161,7 +154,7 @@ loopstart = time.ticks_ms()
 
 #NEXT_VOICE = 0  # the address of where we will send the newest note. Increments and loops around.
 #VOICE_COUNT = len(VOICES)
-VOICE_COUNT = 1########
+VOICE_COUNT = 2
 
 from collections import deque
 #VOICE_USE = deque([], 8)  # voices that are currently in use
@@ -170,7 +163,7 @@ AVBL_VOICES = deque([], 8)  # voices that are not gating, but still might be dec
 # will be the most decayed
 # arbitrarily order the voices into the deque so they all appear once
 AVBL_VOICES.append(0)
-#######AVBL_VOICES.append(1)  # TODO - decent start but need better voice assignment algorithm that picks an unused voice
+AVBL_VOICES.append(1)
 #print("deque ", list(AVBL_VOICES))
 
 def shut_down():
@@ -210,9 +203,13 @@ CONTROLS = Controls(VOICES, LFOLIST, ADSRLIST, shut_down)  # needs to be instant
 CORRECTIONS_ARRAY = array("B", [0] * 16)
 MEASURED_ADDRESS = 0  # the address we are monitoring on the tune bus
 LATCH_PREPARED = False
-PIDLIST = [PidController(4000, 186, 2000), PidController(6000, 36, 4096)]
-COARSELIST = [V.osc.coarse_array, ]######VV.osc.coarse_array
-FINELIST = [V.osc.fine_array, ]######VV.osc.fine_array
+P = 1500
+I = 500
+D = 100
+PIDLIST = [PidController(P, I, D), PidController(P, I, D)]
+# for setting up tuning. 4000, 186, 2000
+COARSELIST = [V.osc.coarse_array, VV.osc.coarse_array]
+FINELIST = [V.osc.fine_array, VV.osc.fine_array]
 # TODO: magic numbers!!!!!!!!!! Centralize PID settings
 
 def tune_loop(corrections_array, get_frequency_func, reset_ema_func):
@@ -225,6 +222,9 @@ def tune_loop(corrections_array, get_frequency_func, reset_ema_func):
     global FINELIST
     global PIDLIST
 
+    ALPHA = 1024  # for EMA of pid corrections
+    EMA = 0
+
     fast_counter = 0
     fast_start_time = time.ticks_ms()
     corrections_array = corrections_array
@@ -234,14 +234,29 @@ def tune_loop(corrections_array, get_frequency_func, reset_ema_func):
     print("Tuning loop started on separate core.")
     cnt = 0
     coarse_jump = 0  # only change coarse increment if we tried to send multiple out-of-range fine signals
-    prev_note = 0  # if the setpoint changed, we want to reset the frequency measurer otherwise our correction
+    prev_note = array("B", [0] * 8)
+    target_wavecount_array = array("I", [0] * 8)
+    # if the setpoint changed, we want to reset the frequency measurer otherwise our correction
     # will be based on old frequency samples
     cycles_since_change = 0
+    cycles_since_address_incremented = 0  # only permit corrections after a certain number of cycles
+    cycles_correction_allowed = 0  # wait this many cycles before issuing any corrections
+    # to give freq and output voltages time to stabilize
+
+    def reset_measurement():
+
+        time.sleep(0.05)
+        reset_ema()
+        freq_count_reset()
+        note = prev_note[MEASURED_ADDRESS]
+        PIDLIST[MEASURED_ADDRESS].reset(note)
+
 
     while 1:
         if RUNNING:
-            freq, stale = get_frequency_ema(min_samples=6)
-            #freq, stale = (1234, False)
+            freq, stale = get_frequency_ema(min_samples=1)  # TODO <----- probably decrease this a bit?? OR change alpha
+            logfreq = fast_log2(freq)
+
             # waiting loops - for new audio sample or for address to change
             while stale:
                 freq, stale = get_frequency_ema()  # poll until we measured a new wave cycle and updated the measurement
@@ -249,56 +264,62 @@ def tune_loop(corrections_array, get_frequency_func, reset_ema_func):
                 time.sleep(0.01)
                 pass  # we asked to measure a different voice, need to wait for the main loop to reach the update part
 
-            pid = PIDLIST[MEASURED_ADDRESS]
-            logfreq = fast_log2(freq)
+            if not logfreq:
+                continue  # don't care if EMA returned 0 (todo - why does it sometimes return 0?)
 
+            pid = PIDLIST[MEASURED_ADDRESS]
             note = CURRENT_NOTES[MEASURED_ADDRESS]  # find out what the measured voice is supposed to be playing
 
-            if not note == prev_note:  # bail early because the target note has changed and our correction is outdated
+            if not note == prev_note[MEASURED_ADDRESS]:
+                # bail early because the target note has changed and our correction is outdated
                 cycles_since_change = 0
-                prev_note = note
+                prev_note[MEASURED_ADDRESS] = note
                 target_wavecount = NOTE_WAVECOUNTS[note]
+                target_wavecount_array[MEASURED_ADDRESS] = target_wavecount
                 # avoids big jumps in PID output
-                time.sleep(0.05)  # wait for everything to stabilize for a bit before resuming corrections
-                reset_ema(target_wavecount)  # start EMA off with a dummy value that is what we want to measure
+                reset_ema()  # start EMA off with a dummy value that is what we want to measure
                 freq_count_reset()
                 pid.setpoint = NOTE_WAVECOUNTS[note]
                 pid.reset(note)  # passing a note to this method recalls the previous accumulated error for that note
-                time.sleep(0.05)
                 continue
 
             corxn = pid.get_correction(logfreq)
-            FINELIST[MEASURED_ADDRESS][note] = corxn + 127  # correct that voice's tuning table
-            # !?!?!?!?!??! offset!?!??!
+            if cycles_since_address_incremented > cycles_correction_allowed:
+                FINELIST[MEASURED_ADDRESS][note] = corxn + 127  # correct that voice's tuning table
+            # !?!?!?!?!??! offset!?!??!  this seems to make it work a lot better!?!?!?!?!?!
 
 
-            if corxn > 255 and cycles_since_change > 20:  # only permit coarse changes after some considerable time
+            if corxn > 128 and cycles_since_change > 20:  # only permit coarse changes after some considerable time
                 coarse_jump += 1
                 if coarse_jump > 3:
                     COARSELIST[MEASURED_ADDRESS][note] += 1
                     coarse_jump = 0
                     pid.reset()
-            elif corxn < 0 and cycles_since_change > 20:
+            elif corxn < -127 and cycles_since_change > 20:
                 coarse_jump += 1
                 if coarse_jump > 3:
                     COARSELIST[MEASURED_ADDRESS][note] -= 1
                     coarse_jump = 0
                     pid.reset()
 
-            print(f"{corxn}\t{PIDLIST[MEASURED_ADDRESS].setpoint}\t{logfreq}")
+            # for plotting graphs
+            #print(f"{corxn}\t{PIDLIST[MEASURED_ADDRESS].setpoint}\t{logfreq}")
 
             fast_counter += 1
             cycles_since_change += 1
+            cycles_since_address_incremented += 1
 
-            """
             cnt += 1
-            if cnt > 300:  # 1000 measurements, increment voice we are measuring
+            if cnt > 200:  # 1000 measurements, increment voice we are measuring
                 MEASURED_ADDRESS += 1
                 if MEASURED_ADDRESS > 1:
                     MEASURED_ADDRESS = 0
                 LATCH_PREPARED = False
                 cnt = 0
-            """
+                reset_measurement()  # don't want new note contaminated with measurements from other one
+                cycles_since_change = 0  # suppress coarse changes
+
+                #time.sleep(0.2)
 
         else:
             break

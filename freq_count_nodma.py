@@ -16,8 +16,8 @@ SM_FREQ = 6_000_000
 MAXX = 2**16-1
 EMA = 0  # module-level exponential moving average value
 DUTY_CYCLE = 0  # exponential moving average of wave duty cycle to make PWM setting more accurate  # TODO
-ALPHA = 2048  # parameter that determines the smoothness of the ema: lower = smoother but more laggy
-# changed 11:35
+ALPHA = 3500  # parameter that determines the smoothness of the ema: lower = smoother but more laggy
+# changed 11:35 4096 = no smoothing at all!!!!
 
 # CHANGED 22:12 - in_ instead of mov to isr  was mov(isr, x)
 # also fixed MAXXX to have -1
@@ -200,7 +200,10 @@ def get_frequency_ema(min_samples=1):
             # todo actually - we can be more clever about re-initializing the EMA, just use the first
             # todo measured value for both parts if EMA == 0
             # need to give a few cycles for the freq to stabilize, we are measuring too fast rn!!!
-            EMA = ((ALPHA * measurement) >> 12) + (((4096 - ALPHA) * EMA) >> 12)  # fixed point version
+            if EMA:
+                EMA = ((ALPHA * measurement) >> 12) + (((4096 - ALPHA) * EMA) >> 12)  # fixed point version
+            else:  # we have been reset, EMA = 0
+                EMA = measurement
             # because it's a FIFO queue, the EMA gives precedence to the newest value we measured
             last = measurement
             margin = last // 20  # tolerate no more than 5% error

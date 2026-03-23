@@ -24,23 +24,30 @@ class PidController:
 
     def reset(self, midinote=None):
 
+        #print("resetting with midinote = ", midinote)
+        #print(self.accumulated_error)
+        #print("self.last sent is", self.last_sent)
+        #print(self.accumulated_error_array)
+
         if midinote:
+
             self.accumulated_error_array[self.current_note] = self.accumulated_error  # store error for this note
+            #print("stored ", self.accumulated_error,  " in the error array")
             self.correction_signal_array[self.current_note] = self.last_sent  # so we can resume when replay this note
             self.accumulated_error = self.accumulated_error_array[midinote]  # look up value for new note
             self.last_sent = self.correction_signal_array[midinote]
+            #print(self.correction_signal_array)
             # PID needs to remember the value it established when previously asked to tune this note
             self.current_note = midinote
         else:
             self.accumulated_error = 0
 
         self.instantaneous_error = 0
-        self.last_called = time.ticks_us()
+        #self.last_called = time.ticks_us()
         self.resetted = True
+        #print("after reset, accu error is ", self.accumulated_error)
 
     def get_correction(self, process_variable):
-
-        #  TODO - derivative term based on change in PV not ERROR 21/03
 
         tnow = time.ticks_us()
 
@@ -49,6 +56,7 @@ class PidController:
         self.last_called = tnow
 
         if self.resetted:
+            #print("sending from within resetted block")
             self.resetted = False
             return self.last_sent
             # this value is written by the reset method and allows us to restart where we left off
@@ -59,7 +67,7 @@ class PidController:
 
         # print("delta: ", delta)
 
-        pterm = min((delta * self.p >> 14), 225)  # add clamping
+        pterm = min((delta * self.p >> 14), 255)  # add clamping
         iterm = (self.accumulated_error * self.i >> 26)
 
         pi = pterm + iterm
@@ -74,6 +82,18 @@ class PidController:
         # print("D-term: ", dterm)
         # print("correction: ", correction)
         # print("---")
+
+        #############
+
+        # TODO: why is it that ONLY SOMETIMES, the accumulated error is multiplied by 20???
+        # this happens when reawakening the PID from dormancy
+        # why why why
+
+        ###########
+
+        if -2000 < correction < 2000:
+
+            print(f"{correction} {pterm} {iterm} {dterm} {self.accumulated_error} {time_step}")
 
         self.last_sent = correction
         return correction
