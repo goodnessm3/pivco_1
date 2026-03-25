@@ -203,8 +203,8 @@ CONTROLS = Controls(VOICES, LFOLIST, ADSRLIST, shut_down)  # needs to be instant
 CORRECTIONS_ARRAY = array("B", [0] * 16)
 MEASURED_ADDRESS = 0  # the address we are monitoring on the tune bus
 LATCH_PREPARED = False
-P = 1500
-I = 500
+P = 400
+I = 600
 D = 100
 PIDLIST = [PidController(P, I, D), PidController(P, I, D)]
 # for setting up tuning. 4000, 186, 2000
@@ -254,6 +254,7 @@ def tune_loop(corrections_array, get_frequency_func, reset_ema_func):
     # parameters for smoothing out the measured correction signal and determining if a note is tuned, converges to 0
     ERROR_EMA = 0
     ERROR_ALPHA = 256
+    EMA_CNT = 0  # want to count 5 cycles with the error within bounds before calling the note tuned
 
 
     while 1:
@@ -281,7 +282,9 @@ def tune_loop(corrections_array, get_frequency_func, reset_ema_func):
                 target_wavecount = NOTE_WAVECOUNTS[note]
                 target_wavecount_array[MEASURED_ADDRESS] = target_wavecount
                 # avoids big jumps in PID output
-                reset_ema()  # start EMA off with a dummy value that is what we want to measure
+                reset_ema(target_wavecount)  # start EMA off with a dummy value that is what we want to measure
+                #### changed above 22:49
+
                 freq_count_reset()
                 pid.setpoint = NOTE_WAVECOUNTS[note]
                 pid.reset(note)  # passing a note to this method recalls the previous accumulated error for that note
@@ -310,7 +313,7 @@ def tune_loop(corrections_array, get_frequency_func, reset_ema_func):
                     pid.reset()
 
             # for plotting graphs
-            #print(f"{corxn}\t{PIDLIST[MEASURED_ADDRESS].setpoint}\t{logfreq}")
+            print(f"{corxn}\t{PIDLIST[MEASURED_ADDRESS].setpoint}\t{logfreq}")
 
             fast_counter += 1
             cycles_since_change += 1
@@ -320,19 +323,24 @@ def tune_loop(corrections_array, get_frequency_func, reset_ema_func):
             #print(ERROR_EMA)
 
             cnt += 1
-            #if cnt > 200:  # 1000 measurements, increment voice we are measuring
-            print(ERROR_EMA)
+            if cnt > 200:  # 1000 measurements, increment voice we are measuring
+            #print(ERROR_EMA)
             #print(MEASURED_ADDRESS)
-            if -10 < ERROR_EMA < 10:  # consider the note tuned and move on
-                # not this error is a number of clock cycles counted per wave cycle.
-                ERROR_EMA = 20  # fudge factor to force collection of some measurements
-                MEASURED_ADDRESS += 1
-                if MEASURED_ADDRESS > 1:
-                    MEASURED_ADDRESS = 0
-                LATCH_PREPARED = False
-                cnt = 0
-                reset_measurement()  # don't want new note contaminated with measurements from other one
-                cycles_since_change = 0  # suppress coarse changes
+            #if -20 < ERROR_EMA < 20:  # consider the note tuned and move on
+                EMA_CNT += 1
+                if EMA_CNT < 5:
+                    pass
+                else:
+                    EMA_CNT = 0
+                    # not this error is a number of clock cycles counted per wave cycle.
+                    ERROR_EMA = 20  # fudge factor to force collection of some measurements
+                    MEASURED_ADDRESS += 1
+                    if MEASURED_ADDRESS > 1:
+                        MEASURED_ADDRESS = 0
+                    LATCH_PREPARED = False
+                    cnt = 0
+                    reset_measurement()  # don't want new note contaminated with measurements from other one
+                    cycles_since_change = 0  # suppress coarse changes
 
                 #time.sleep(0.2)
 
