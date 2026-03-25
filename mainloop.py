@@ -245,11 +245,15 @@ def tune_loop(corrections_array, get_frequency_func, reset_ema_func):
 
     def reset_measurement():
 
-        time.sleep(0.05)
+        time.sleep(0.1)
         reset_ema()
         freq_count_reset()
         note = prev_note[MEASURED_ADDRESS]
         PIDLIST[MEASURED_ADDRESS].reset(note)
+
+    # parameters for smoothing out the measured correction signal and determining if a note is tuned, converges to 0
+    ERROR_EMA = 0
+    ERROR_ALPHA = 256
 
 
     while 1:
@@ -284,6 +288,9 @@ def tune_loop(corrections_array, get_frequency_func, reset_ema_func):
                 continue
 
             corxn = pid.get_correction(logfreq)
+            error = pid.get_error()
+            ERROR_EMA = ((ERROR_ALPHA * error) >> 12) + (((4096 - ERROR_ALPHA) * ERROR_EMA) >> 12)
+
             if cycles_since_address_incremented > cycles_correction_allowed:
                 FINELIST[MEASURED_ADDRESS][note] = corxn + 127  # correct that voice's tuning table
             # !?!?!?!?!??! offset!?!??!  this seems to make it work a lot better!?!?!?!?!?!
@@ -309,8 +316,16 @@ def tune_loop(corrections_array, get_frequency_func, reset_ema_func):
             cycles_since_change += 1
             cycles_since_address_incremented += 1
 
+
+            #print(ERROR_EMA)
+
             cnt += 1
-            if cnt > 200:  # 1000 measurements, increment voice we are measuring
+            #if cnt > 200:  # 1000 measurements, increment voice we are measuring
+            print(ERROR_EMA)
+            #print(MEASURED_ADDRESS)
+            if -10 < ERROR_EMA < 10:  # consider the note tuned and move on
+                # not this error is a number of clock cycles counted per wave cycle.
+                ERROR_EMA = 20  # fudge factor to force collection of some measurements
                 MEASURED_ADDRESS += 1
                 if MEASURED_ADDRESS > 1:
                     MEASURED_ADDRESS = 0
@@ -359,14 +374,16 @@ try:
                 #print(msg)
                 CONTROLS.process_control_signal(*msg)
                 ret = CONTROLS.get_updated()  # todo - careful we aren't discarding things
+                #print(ret)
                 if not ret:
                     continue  # should this be break?
-                ob, parm, value = ret[0]
-                if parm:  # write the named variable of the specified object
-                    # ob.__setattr__(parm, value)  # not this!!
-                    setattr(ob, parm, value)  # but this!!
-                pair = DM.update(ret[0])  # get a new frame buffer for the LCD
-                DISPLAY.update(pair)  # send the new frame buffer for display next loop
+                for tup in ret:
+                    ob, parm, value = tup
+                    if parm:  # write the named variable of the specified object
+                        # ob.__setattr__(parm, value)  # not this!!
+                        setattr(ob, parm, value)  # but this!!
+                    pair = DM.update(tup)  # get a new frame buffer for the LCD
+                    DISPLAY.update(pair)  # send the new frame buffer for display next loop
 
         for status, note in notes_queue:  # tuples of freq, true/false
 
@@ -406,11 +423,9 @@ try:
             ADDRESS_MANAGER.put(i)
             VOICES[i].update()
             # todo - need to update when decaying, but want to avoid when absolutely nothing happening
-        #for q in VOICES:
-            #q.update()
 
 except Exception as e:
-    print(e)
+    print(repr(e))
 
 finally:
     shut_down()

@@ -77,6 +77,7 @@ class Controls:
         # these won't be set if we are changing the selected ADSR/LFO, still need to update
         # the display with the identity of the changed object though
         param_name = None
+        object_type = None
 
         if channel == 17:  # param select knob,
             return  # TODO - fill in later
@@ -114,7 +115,11 @@ class Controls:
             elif object_type == "ADSR":
                 actual_object = self.selected_adsr
 
-        self.updated.append((actual_object, param_name, value))  # this is used to update objects in the main thread
+        if object_type == "VOICE":  # slightly temporary, just update all voice objects the same
+            for q in self.voice_list:
+                self.updated.append((q, param_name, value))
+        else:
+            self.updated.append((actual_object, param_name, value))  # this is used to update objects in the main thread
 
     def get_updated(self):
 

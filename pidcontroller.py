@@ -93,7 +93,9 @@ class PidController:
 
         if -2000 < correction < 2000:
 
-            print(f"{correction} {pterm} {iterm} {dterm} {self.accumulated_error} {time_step}")
+            #print(f"{correction} {pterm} {iterm} {dterm} {self.accumulated_error} {time_step}")
+            bazzer = 1
+            #pass
 
         self.last_sent = correction
         return correction
